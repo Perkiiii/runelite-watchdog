@@ -21,6 +21,7 @@ public class NoteNodePanel extends NodePanel {
             TextInput textInput = new TextInput("Enter note...", "Note text", node.getNote());
             this.items.add(new ConnectionLine<>(noteIn, textInput, null));
             this.watchDirty(node.getNote());
+            textInput.registerOnType(text -> this.pack());
         }
 
         this.pack();
