@@ -7,7 +7,6 @@ import com.adamk33n3r.runelite.watchdog.WatchdogPlugin;
 import com.adamk33n3r.runelite.watchdog.alerts.Alert;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
 
-import com.google.gson.Gson;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.swing.*;
@@ -120,16 +119,13 @@ public class ImportExportDialog extends JDialog {
 
     // Export
     public ImportExportDialog(Component parent, Alert alert) {
-        Gson gson = WatchdogPlugin.getInstance().getAlertManager().getGson();
-        String json = gson.toJson(alert);
-        String pretty = gson.newBuilder().setPrettyPrinting().create().toJson(alert);
-        this.showExport(parent, json, pretty);
+        this(parent, List.of(alert));
     }
 
     public ImportExportDialog(Component parent, List<Alert> alerts) {
-        Gson gson = WatchdogPlugin.getInstance().getAlertManager().getGson();
-        String json = gson.toJson(alerts);
-        String pretty = gson.newBuilder().setPrettyPrinting().create().toJson(alerts);
+        var alertManager = WatchdogPlugin.getInstance().getAlertManager();
+        String json = alertManager.exportToJson(alerts);
+        String pretty = alertManager.exportToJsonPretty(alerts);
         this.showExport(parent, json, pretty);
     }
 

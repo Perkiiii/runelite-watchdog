@@ -4,6 +4,7 @@ import com.adamk33n3r.nodegraph.nodes.ActionNode;
 import com.adamk33n3r.nodegraph.nodes.TriggerNode;
 import com.adamk33n3r.runelite.watchdog.alerts.*;
 import com.adamk33n3r.runelite.watchdog.serialization.AlertMigrator;
+import com.adamk33n3r.runelite.watchdog.serialization.VersionedAlertExport;
 import com.adamk33n3r.runelite.watchdog.serialization.WatchdogGsonFactory;
 
 import com.adamk33n3r.runelite.watchdog.elevenlabs.ElevenLabs;
@@ -29,10 +30,12 @@ import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
 import java.awt.Color;
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -368,7 +371,17 @@ public class AlertManager {
             alerts.clear();
         }
 
-        Supplier<Stream<Alert>> alertStream = this.tryImport(json);
+        // Detect versioned wrapper first; fall back to plain alert JSON.
+        // Migrate toAdd before appending so existing alerts are never re-migrated.
+        Supplier<Stream<Alert>> alertStream;
+        VersionedAlertExport versioned = VersionedAlertExport.tryParse(this.gson, json);
+        if (versioned != null) {
+            List<Alert> toAdd = versioned.getAlerts().stream().filter(Objects::nonNull).collect(Collectors.toList());
+            this.alertMigrator.migrate(toAdd, new Version(versioned.getVersion()));
+            alertStream = toAdd::stream;
+        } else {
+            alertStream = this.tryImport(json);
+        }
 
         // Validate regex properties
         if (checkRegex && !alertStream.get().allMatch(alert -> {
@@ -396,6 +409,15 @@ public class AlertManager {
             SwingUtilities.invokeLater(this.watchdogPanel::scrollToBottom);
         });
         return true;
+    }
+
+    public String exportToJson(List<Alert> alerts) {
+        return this.gson.toJson(new VersionedAlertExport(this.pluginVersion, alerts));
+    }
+
+    public String exportToJsonPretty(List<Alert> alerts) {
+        return this.gson.newBuilder().setPrettyPrinting().create()
+            .toJson(new VersionedAlertExport(this.pluginVersion, alerts));
     }
 
     public void saveAlerts() {
