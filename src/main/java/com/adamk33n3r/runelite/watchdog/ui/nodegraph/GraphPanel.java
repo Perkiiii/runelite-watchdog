@@ -511,6 +511,9 @@ public class GraphPanel extends JLayeredPane {
             if (panel != null) {
                 nodePanelMap.put(node, panel);
                 this.add(panel, NODE_LAYER);
+                if (node.isCollapsed()) {
+                    panel.applyCollapsedState();
+                }
             }
         }
         for (com.adamk33n3r.nodegraph.Connection<?> conn : g.getConnections()) {

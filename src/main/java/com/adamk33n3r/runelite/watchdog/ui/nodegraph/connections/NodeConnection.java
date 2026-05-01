@@ -53,12 +53,19 @@ public class NodeConnection extends Connection {
         NodePanel startPanel = this.startPoint.getNodePanel();
         NodePanel endPanel = this.endPoint.getNodePanel();
         this.start.x = NodePanel.PANEL_WIDTH + Math.max(startPanel.getX() - endPanel.getX(), 0);
-        Point newPoint = SwingUtilities.convertPoint(this.startPoint.getParent(), this.startPoint.getLocation(), this.startPoint.getNodePanel());
-//        this.start.y = Math.max(startPanel.getY() - endPanel.getY(), 0) + NodePanel.TITLE_HEIGHT + newPoint.y + this.startPoint.getSize().height / 2;
-        this.start.y = Math.max(startPanel.getY() - endPanel.getY(), 0) + newPoint.y + this.startPoint.getSize().height / 2;
+        if (startPanel.getNode().isCollapsed()) {
+            this.start.y = Math.max(startPanel.getY() - endPanel.getY(), 0) + NodePanel.TITLE_HEIGHT / 2;
+        } else {
+            Point newPoint = SwingUtilities.convertPoint(this.startPoint.getParent(), this.startPoint.getLocation(), this.startPoint.getNodePanel());
+            this.start.y = Math.max(startPanel.getY() - endPanel.getY(), 0) + newPoint.y + this.startPoint.getSize().height / 2;
+        }
         this.end.x = Math.max(endPanel.getX() - startPanel.getX(), 0);
-        Point newPointEnd = SwingUtilities.convertPoint(this.endPoint.getParent(), this.endPoint.getLocation(), this.endPoint.getNodePanel());
-        this.end.y = Math.max(endPanel.getY() - startPanel.getY(), 0) + newPointEnd.y + this.endPoint.getSize().height / 2;
+        if (endPanel.getNode().isCollapsed()) {
+            this.end.y = Math.max(endPanel.getY() - startPanel.getY(), 0) + NodePanel.TITLE_HEIGHT / 2;
+        } else {
+            Point newPointEnd = SwingUtilities.convertPoint(this.endPoint.getParent(), this.endPoint.getLocation(), this.endPoint.getNodePanel());
+            this.end.y = Math.max(endPanel.getY() - startPanel.getY(), 0) + newPointEnd.y + this.endPoint.getSize().height / 2;
+        }
 
         super.paintComponent(g);
 

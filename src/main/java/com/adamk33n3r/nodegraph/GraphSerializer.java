@@ -30,6 +30,7 @@ public class GraphSerializer implements JsonSerializer<Graph>, JsonDeserializer<
             nodeObj.addProperty("id", node.getId().toString());
             nodeObj.addProperty("x", node.getX());
             nodeObj.addProperty("y", node.getY());
+            nodeObj.addProperty("collapsed", node.isCollapsed());
 
             // Lossless resave for unknown-type placeholders
             if (node instanceof NoteNode) {
@@ -75,6 +76,7 @@ public class GraphSerializer implements JsonSerializer<Graph>, JsonDeserializer<
                 String id = nodeObj.has("id") ? nodeObj.get("id").getAsString() : null;
                 int x = nodeObj.has("x") ? nodeObj.get("x").getAsInt() : 0;
                 int y = nodeObj.has("y") ? nodeObj.get("y").getAsInt() : 0;
+                boolean collapsed = nodeObj.has("collapsed") && nodeObj.get("collapsed").getAsBoolean();
 
                 Node node;
                 try {
@@ -95,6 +97,7 @@ public class GraphSerializer implements JsonSerializer<Graph>, JsonDeserializer<
 
                 node.setX(x);
                 node.setY(y);
+                node.setCollapsed(collapsed);
                 if (id != null) {
                     node.setId(UUID.fromString(id));
                     nodeById.put(id, node);

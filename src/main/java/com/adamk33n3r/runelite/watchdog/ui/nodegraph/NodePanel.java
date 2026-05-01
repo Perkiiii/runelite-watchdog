@@ -75,6 +75,7 @@ public class NodePanel extends JPanel {
     private final String typeName;
     private final JLabel nameLabel;
     private final Border border;
+    private JButton collapseButton;
 
 //    protected JPanel inConnectionPoints;
 //    protected JPanel outConnectionPoints;
@@ -96,6 +97,16 @@ public class NodePanel extends JPanel {
         nameLabel.setBorder(new EmptyBorder(0, 5, 0, 0));
         JPanel topPanel = new JPanel(new BorderLayout());
         topPanel.setOpaque(false);
+        this.collapseButton = new JButton("\u25BC");
+        this.collapseButton.setOpaque(false);
+        this.collapseButton.setContentAreaFilled(false);
+        this.collapseButton.setBorderPainted(false);
+        this.collapseButton.setFocusPainted(false);
+        this.collapseButton.setForeground(Color.WHITE);
+        this.collapseButton.setPreferredSize(new Dimension(20, 20));
+        this.collapseButton.setFont(this.collapseButton.getFont().deriveFont(9f));
+        this.collapseButton.addActionListener(ev -> this.toggle());
+        topPanel.add(this.collapseButton, BorderLayout.WEST);
         topPanel.add(nameLabel, BorderLayout.CENTER);
         JButton button = new JButton("\u00D7");
         button.setOpaque(false);
@@ -149,6 +160,14 @@ public class NodePanel extends JPanel {
         this.addMouseListener(draggingMouseAdapter);
         this.addMouseMotionListener(draggingMouseAdapter);
         this.addMouseListener(onTopAdapter);
+        this.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && e.getY() < TITLE_HEIGHT) {
+                    toggle();
+                }
+            }
+        });
     }
 
     @Override
@@ -180,16 +199,38 @@ public class NodePanel extends JPanel {
 
     public void pack() {
         SwingUtilities.invokeLater(() -> {
+            Insets borderInsets = this.border.getBorderInsets(this);
+            int fullWidth = PANEL_WIDTH + borderInsets.left + borderInsets.right;
+            if (this.node.isCollapsed()) {
+                this.setBounds(this.getX(), this.getY(), fullWidth, TITLE_HEIGHT);
+                this.revalidate();
+                this.repaint();
+                return;
+            }
             int totalHeight = Arrays.stream(this.items.getComponents())
                 .mapToInt(c -> c.getPreferredSize().height)
                 .sum();
             int padding = 5 * (this.items.getComponentCount() - 1);
-            Insets borderInsets = this.border.getBorderInsets(this);
-            this.setBounds(this.getX(), this.getY(), PANEL_WIDTH + borderInsets.left + borderInsets.right, totalHeight + TITLE_HEIGHT + padding + 2 + borderInsets.top + borderInsets.bottom); // idk why it's +2
+            this.setBounds(this.getX(), this.getY(), fullWidth, totalHeight + TITLE_HEIGHT + padding + 2 + borderInsets.top + borderInsets.bottom); // idk why it's +2
             // Not sure why alert node panels need these but notification node panels don't
             this.revalidate();
             this.repaint();
         });
+    }
+
+    public void toggle() {
+        this.node.setCollapsed(!this.node.isCollapsed());
+        this.applyCollapsedState();
+        this.notifyChange();
+    }
+
+    public void applyCollapsedState() {
+        boolean collapsed = this.node.isCollapsed();
+        this.items.setVisible(!collapsed);
+        this.collapseButton.setText(collapsed ? "▶" : "▼");
+        this.pack();
+        this.connections.forEach(NodeConnection::recalculateBounds);
+        this.graphPanel.repaint();
     }
 
     public void updateHeaderLabel(String newName) {

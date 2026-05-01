@@ -12,6 +12,8 @@ public abstract class Node {
     private UUID id = UUID.randomUUID();
     @Getter @Setter
     private int x, y;
+    @Getter @Setter
+    private boolean collapsed = false;
 
     @Getter
     protected final Map<String, VarInput<?>> inputs = new LinkedHashMap<>();

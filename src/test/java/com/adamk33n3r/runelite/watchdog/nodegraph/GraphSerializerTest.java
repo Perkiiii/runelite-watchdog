@@ -92,6 +92,17 @@ public class GraphSerializerTest {
     }
 
     @Test
+    public void roundTrip_preservesCollapsedState() {
+        Graph graph = new Graph();
+        TriggerNode trigger = new TriggerNode(new ChatAlert("test"));
+        trigger.setCollapsed(true);
+        graph.add(trigger);
+
+        Graph loaded = roundTrip(graph);
+        assertTrue(loaded.getNodes().get(0).isCollapsed());
+    }
+
+    @Test
     public void roundTrip_preservesNumValue() {
         Graph graph = new Graph();
         Num num = new Num();
