@@ -3,6 +3,7 @@ package com.adamk33n3r.runelite.watchdog.ui.panels;
 import com.adamk33n3r.runelite.watchdog.*;
 import com.adamk33n3r.runelite.watchdog.alerts.AdvancedAlert;
 import com.adamk33n3r.runelite.watchdog.alerts.Alert;
+import com.adamk33n3r.runelite.watchdog.alerts.AlertGroup;
 import com.adamk33n3r.runelite.watchdog.ui.*;
 
 import net.runelite.client.ui.MultiplexingPluginPanel;
@@ -14,6 +15,7 @@ import javax.swing.*;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.util.List;
 
 /**
  * Sidebar chrome wrapper for an {@link AlertContentPanel}.
@@ -148,6 +150,17 @@ public class AlertPanel<T extends Alert> extends PluginPanel {
         nameGroup.add(backButton, BorderLayout.WEST);
 
         northPanel.add(nameGroup);
+
+        if (!(alert instanceof AdvancedAlert) && this.plugin.getConfig().enableAdvancedAlerts()) {
+            JButton convertBtn = new JButton("Convert to Advanced Alert");
+            convertBtn.setToolTipText("Convert this alert to a node graph (original is preserved)");
+            convertBtn.addActionListener(ev -> this.convertToAdvanced(alert));
+            JPanel convertRow = new JPanel(new BorderLayout());
+            convertRow.setBorder(new EmptyBorder(0, 5, 5, 5));
+            convertRow.add(convertBtn, BorderLayout.CENTER);
+            northPanel.add(convertRow);
+        }
+
         northPanel.add(this.contentPanel);
 
         this.centerContainer = new JPanel(new BorderLayout());
@@ -159,6 +172,43 @@ public class AlertPanel<T extends Alert> extends PluginPanel {
 
         if (this.contentPanel.includeNotifications()) {
             this.addNotifications(alert);
+        }
+    }
+
+    private void convertToAdvanced(Alert alert) {
+        if (AlertConverter.hasNestedGroups(alert)) {
+            int choice = JOptionPane.showConfirmDialog(
+                this,
+                "This alert group contains nested groups which will be flattened into the advanced alert.\nContinue?",
+                "Convert to Advanced Alert",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.WARNING_MESSAGE
+            );
+            if (choice != JOptionPane.OK_OPTION) return;
+        }
+
+        AlertConverter converter = WatchdogPlugin.getInstance().getAlertConverter();
+        AdvancedAlert converted = converter.convert(alert);
+
+        AlertGroup parent = alert.getParent();
+        List<Alert> list = parent != null ? parent.getAlerts() : this.alertManager.getAlerts();
+        int idx = list.indexOf(alert);
+        if (idx >= 0) {
+            list.add(idx + 1, converted);
+        } else {
+            list.add(converted);
+        }
+
+        this.alertManager.saveAlerts();
+        this.contentPanel.onBack();
+        this.muxer.popState();
+
+        // Workaround for the onActivate rebuild issue
+        // TODO remove if it ever gets fixed https://github.com/runelite/runelite/issues/17712
+        int componentCount = this.muxer.getComponentCount();
+        Component component = this.muxer.getComponent(componentCount - 1);
+        if (component instanceof AlertPanel) {
+            ((AlertPanel<?>) component).rebuild();
         }
     }
 

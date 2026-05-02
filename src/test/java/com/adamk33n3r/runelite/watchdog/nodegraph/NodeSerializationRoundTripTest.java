@@ -23,7 +23,7 @@ public class NodeSerializationRoundTripTest {
 
     @Before
     public void setup() {
-        this.gson = new WatchdogGsonFactory().create(RuneLiteAPI.GSON);
+        this.gson = WatchdogGsonFactory.create(RuneLiteAPI.GSON);
     }
 
     @Test

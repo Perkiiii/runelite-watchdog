@@ -14,7 +14,7 @@ import static org.junit.Assert.*;
 
 public class VersionedAlertExportTest {
 
-    private final Gson gson = new WatchdogGsonFactory().create(RuneLiteAPI.GSON);
+    private final Gson gson = WatchdogGsonFactory.create(RuneLiteAPI.GSON);
 
     // ── tryParse detection ───────────────────────────────────────────────────
 

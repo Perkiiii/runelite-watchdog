@@ -85,6 +85,10 @@ public class WatchdogPlugin extends Plugin {
 
     @Getter
     @Inject
+    private AlertConverter alertConverter;
+
+    @Getter
+    @Inject
     private PopupManager popupManager;
 
     @Inject

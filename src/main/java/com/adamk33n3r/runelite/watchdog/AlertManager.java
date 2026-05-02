@@ -43,8 +43,6 @@ import java.util.stream.Stream;
 public class AlertManager {
     @Inject
     private ConfigManager configManager;
-    @Inject
-    private Gson clientGson;
     @Getter
     private Gson gson;
 
@@ -81,11 +79,8 @@ public class AlertManager {
     }
 
     @Inject
-    private WatchdogGsonFactory gsonFactory;
-
-    @Inject
-    private void init() {
-        this.gson = this.gsonFactory.create(this.clientGson);
+    private void init(Gson gson) {
+        this.gson = WatchdogGsonFactory.create(gson);
     }
 
     public void createStarterAlertsIfEmpty() {

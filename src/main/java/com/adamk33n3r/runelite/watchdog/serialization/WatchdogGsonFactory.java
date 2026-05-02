@@ -40,7 +40,7 @@ public class WatchdogGsonFactory {
      * @param clientGson the base RuneLite Gson to extend
      * @return the watchdog-configured Gson instance
      */
-    public Gson create(Gson clientGson) {
+    public static Gson create(Gson clientGson) {
         final RuntimeTypeAdapterFactory<Alert> alertTypeFactory = RuntimeTypeAdapterFactory.of(Alert.class)
             .ignoreSubtype("IdleAlert")
             .ignoreSubtype("ResourceAlert")

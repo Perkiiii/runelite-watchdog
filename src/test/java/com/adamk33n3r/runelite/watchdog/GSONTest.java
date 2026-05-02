@@ -12,7 +12,7 @@ import static org.junit.Assert.assertEquals;
 public class GSONTest {
     @Test
     public void json_missing_property_with_initializer_test() throws Exception {
-        Gson gson = new WatchdogGsonFactory().create(new Gson());
+        Gson gson = WatchdogGsonFactory.create(new Gson());
         TextToSpeech tts = gson.fromJson("{\"type\":\"TextToSpeech\", \"message\":\"this is a test\"}", TextToSpeech.class);
 
         assertEquals(TTSSource.ELEVEN_LABS, tts.getSource());

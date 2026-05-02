@@ -17,7 +17,7 @@ public class DisplayNodeTest {
 
     @Before
     public void setup() {
-        this.gson = new WatchdogGsonFactory().create(RuneLiteAPI.GSON);
+        this.gson = WatchdogGsonFactory.create(RuneLiteAPI.GSON);
     }
 
     @Test
