@@ -1,5 +1,6 @@
 package com.adamk33n3r.runelite.watchdog;
 
+import com.adamk33n3r.runelite.watchdog.alerts.AdvancedAlert;
 import com.adamk33n3r.runelite.watchdog.alerts.Alert;
 import com.adamk33n3r.runelite.watchdog.alerts.AlertGroup;
 import com.adamk33n3r.runelite.watchdog.alerts.AlertMode;
@@ -268,6 +269,8 @@ public class WatchdogPlugin extends Plugin {
 
     @Override
     protected void shutDown() throws Exception {
+        this.alertManager.getAllAlertsOfType(AdvancedAlert.class)
+            .forEach(aa -> aa.getGraph().shutdown());
         this.eventBus.unregister(this.eventHandler);
         this.eventBus.unregister(this.objectMarkerManager);
         this.clientToolbar.removeNavigation(this.navButton);
@@ -305,6 +308,14 @@ public class WatchdogPlugin extends Plugin {
             this.alertProcessors.stream()
                 .filter(ap -> ap.getAlert() == alert)
                 .forEach(AlertProcessor::interrupt);
+        }
+    }
+
+    public void shutdownAdvancedAlertGraph(Alert alert) {
+        if (alert instanceof AdvancedAlert) {
+            ((AdvancedAlert) alert).getGraph().shutdown();
+        } else if (alert instanceof AlertGroup) {
+            ((AlertGroup) alert).getAlerts().forEach(this::shutdownAdvancedAlertGraph);
         }
     }
 

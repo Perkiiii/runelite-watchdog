@@ -61,6 +61,13 @@ public class Graph {
         };
     }
 
+    public void shutdown() {
+        if (this.scheduler != null) {
+            this.scheduler.shutdown();
+            this.scheduler = null;
+        }
+    }
+
     public void add(Node node) {
         this.nodes.add(node);
     }
@@ -154,8 +161,13 @@ public class Graph {
                 continue;
             }
             sb.append(node.getClass().getSimpleName()).append(":\n");
-            for (Connection<?> connection : this.connections) {
-                if (connection.getOutput().getNode() == node) {
+            List<Connection<?>> connections = this.connections.stream()
+                .filter(connection -> connection.getOutput().getNode() == node)
+                .collect(Collectors.toList());
+            if (connections.isEmpty()) {
+                sb.append("  No connections\n");
+            } else {
+                connections.forEach(connection -> {
                     sb.append("  ")
                         .append(connection.getOutput().getNode().getClass().getSimpleName())
                         .append(":")
@@ -165,10 +177,7 @@ public class Graph {
                         .append(":")
                         .append(connection.getInput().getNode().getClass().getSimpleName())
                         .append("\n");
-                }
-            }
-            if (this.connections.isEmpty()) {
-                sb.append("  No connections\n");
+                });
             }
         }
         return sb.toString();

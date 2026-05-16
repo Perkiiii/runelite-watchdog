@@ -98,13 +98,11 @@ tasks.register("shadowJar", Jar) {
 
     group = BasePlugin.BUILD_GROUP
     archiveClassifier = "shadow"
-    archiveFileName.set(providers.provider {
-        def base = rootProject.name + "-" + project.version
-        def suffix = "-all.jar"
-        def n = nextBuildNumber(destinationDirectory.get().asFile, base, suffix)
-        n == 0 ? "${base}${suffix}" : "${base}+${n}${suffix}"
-    })
     destinationDirectory = file('jars')
+    def base = rootProject.name + "-" + project.version
+    def suffix = "-all.jar"
+    def n = nextBuildNumber(destinationDirectory.get().asFile, base, suffix)
+    archiveFileName = n == 0 ? "${base}${suffix}" : "${base}+${n}${suffix}"
     doLast {
         println("file://"+destinationDirectory.get().asFile.toURI().rawPath)
         println(archiveFileName.get())
@@ -139,13 +137,11 @@ tasks.register("shadowJarNGE", Jar) {
 
     group = BasePlugin.BUILD_GROUP
     archiveClassifier = "shadow"
-    archiveFileName.set(providers.provider {
-        def base = rootProject.name + "-" + project.version
-        def suffix = "-nge-all.jar"
-        def n = nextBuildNumber(destinationDirectory.get().asFile, base, suffix)
-        n == 0 ? "${base}${suffix}" : "${base}+${n}${suffix}"
-    })
     destinationDirectory = file('jars')
+    def base = rootProject.name + "-" + project.version
+    def suffix = "-nge-all.jar"
+    def n = nextBuildNumber(destinationDirectory.get().asFile, base, suffix)
+    archiveFileName = n == 0 ? "${base}${suffix}" : "${base}+${n}${suffix}"
     doLast {
         println("file://"+destinationDirectory.get().asFile.toURI().rawPath)
         println(archiveFileName.get())

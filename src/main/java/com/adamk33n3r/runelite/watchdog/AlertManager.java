@@ -313,6 +313,7 @@ public class AlertManager {
     }
 
     public void removeAlert(Alert alert, boolean rebuildPanel) {
+        this.plugin.shutdownAdvancedAlertGraph(alert);
         AlertGroup parent = alert.getParent();
         if (parent != null) {
             parent.getAlerts().remove(alert);
