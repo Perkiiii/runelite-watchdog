@@ -11,3 +11,4 @@ jars/
 test.properties
 .claude/settings.local.json
 .claude/worktrees
+bash.exe.stackdump
