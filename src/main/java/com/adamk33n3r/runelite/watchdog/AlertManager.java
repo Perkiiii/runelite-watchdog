@@ -1,17 +1,20 @@
 package com.adamk33n3r.runelite.watchdog;
 
+import com.adamk33n3r.nodegraph.nodes.ActionNode;
+import com.adamk33n3r.nodegraph.nodes.TriggerNode;
 import com.adamk33n3r.runelite.watchdog.alerts.*;
+import com.adamk33n3r.runelite.watchdog.serialization.AlertMigrator;
+import com.adamk33n3r.runelite.watchdog.serialization.VersionedAlertExport;
+import com.adamk33n3r.runelite.watchdog.serialization.WatchdogGsonFactory;
+
 import com.adamk33n3r.runelite.watchdog.elevenlabs.ElevenLabs;
-import com.adamk33n3r.runelite.watchdog.hub.AlertHubCategory;
 import com.adamk33n3r.runelite.watchdog.notifications.*;
 import com.adamk33n3r.runelite.watchdog.notifications.tts.TTSSource;
 import com.adamk33n3r.runelite.watchdog.notifications.tts.Voice;
-import com.adamk33n3r.runelite.watchdog.notifications.objectmarkers.ObjectMarker;
 import com.adamk33n3r.runelite.watchdog.ui.ComparableNumber;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
 
 import net.runelite.client.config.ConfigManager;
-import net.runelite.client.config.FlashNotification;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
@@ -27,11 +30,12 @@ import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
 import java.awt.Color;
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -39,13 +43,14 @@ import java.util.stream.Stream;
 public class AlertManager {
     @Inject
     private ConfigManager configManager;
-    @Inject
-    private Gson clientGson;
     @Getter
     private Gson gson;
 
     @Inject
     private WatchdogConfig watchdogConfig;
+
+    @Inject
+    private AlertBackupManager alertBackupManager;
 
     @Getter
     private final List<Alert> alerts = new CopyOnWriteArrayList<>();
@@ -57,6 +62,9 @@ public class AlertManager {
 
     @Inject
     private WatchdogPlugin plugin;
+
+    @Inject
+    private AlertMigrator alertMigrator;
 
     @Inject
     @Named("watchdog.pluginVersion")
@@ -71,54 +79,8 @@ public class AlertManager {
     }
 
     @Inject
-    private void init() {
-        // Add new alert types here
-        final RuntimeTypeAdapterFactory<Alert> alertTypeFactory = RuntimeTypeAdapterFactory.of(Alert.class)
-            .ignoreSubtype("IdleAlert")
-            .ignoreSubtype("ResourceAlert")
-            .recognizeSubtypes()
-            .registerSubtype(ChatAlert.class)
-            .registerSubtype(PlayerChatAlert.class)
-            .registerSubtype(OverheadTextAlert.class)
-            .registerSubtype(NotificationFiredAlert.class)
-            .registerSubtype(StatDrainAlert.class)
-            .registerSubtype(StatChangedAlert.class)
-            .registerSubtype(XPDropAlert.class)
-            .registerSubtype(SoundFiredAlert.class)
-            .registerSubtype(SpawnedAlert.class)
-            .registerSubtype(InventoryAlert.class)
-            .registerSubtype(AlertGroup.class)
-            .registerSubtype(LocationAlert.class);
-        // Add new notification types here
-        final RuntimeTypeAdapterFactory<Notification> notificationTypeFactory = RuntimeTypeAdapterFactory.of(Notification.class)
-            .registerSubtype(TrayNotification.class)
-            .registerSubtype(TextToSpeech.class)
-            .registerSubtype(Sound.class)
-            .registerSubtype(SoundEffect.class)
-            .registerSubtype(ScreenFlash.class)
-            .registerSubtype(GameMessage.class)
-            .registerSubtype(Overhead.class)
-            .registerSubtype(Overlay.class)
-            .registerSubtype(Popup.class)
-            .registerSubtype(RequestFocus.class)
-            .registerSubtype(NotificationEvent.class)
-            .registerSubtype(ScreenMarker.class)
-            .registerSubtype(ObjectMarker.class)
-            .registerSubtype(Dink.class)
-            .registerSubtype(Counter.class)
-            .registerSubtype(ShortestPath.class)
-            .registerSubtype(PluginMessage.class)
-            .registerSubtype(PluginToggle.class)
-            .registerSubtype(AlertToggle.class)
-            .registerSubtype(DismissObjectMarker.class)
-            .registerSubtype(DismissOverlay.class)
-            .registerSubtype(DismissScreenMarker.class);
-        this.gson = this.clientGson.newBuilder()
-//            .serializeNulls()
-            .registerTypeAdapterFactory(alertTypeFactory)
-            .registerTypeAdapterFactory(notificationTypeFactory)
-            .registerTypeAdapter(AlertHubCategory.class, new MixedCaseEnumAdapter())
-            .create();
+    private void init(Gson gson) {
+        this.gson = WatchdogGsonFactory.create(gson);
     }
 
     public void createStarterAlertsIfEmpty() {
@@ -282,9 +244,19 @@ public class AlertManager {
     }
 
     public <T extends Alert> Stream<T> getAllEnabledAlertsOfType(Class<T> type) {
+        if (type == AdvancedAlert.class && !this.watchdogConfig.enableAdvancedAlerts()) {
+            return Stream.empty();
+        }
         return this.getAllEnabledAlerts()
             .filter(type::isInstance)
             .map(type::cast);
+    }
+
+    public <T extends Alert> boolean hasEnabledAlertsOfType(Class<T> type) {
+        if (type == AdvancedAlert.class && !this.watchdogConfig.enableAdvancedAlerts()) {
+            return false;
+        }
+        return this.getAllEnabledAlerts().anyMatch(type::isInstance);
     }
 
     public Stream<Alert> getAllAlerts() {
@@ -321,7 +293,11 @@ public class AlertManager {
     }
 
     public <T extends Alert> T createAlert(Class<T> alertClass) {
-        return this.plugin.getInjector().getInstance(alertClass);
+        T alert = this.plugin.getInjector().getInstance(alertClass);
+        if (alert instanceof AdvancedAlert) {
+            ((AdvancedAlert) alert).addWelcomeNote();
+        }
+        return alert;
     }
 
     public void addAlert(Alert alert, boolean overrideWithDefaults) {
@@ -337,6 +313,7 @@ public class AlertManager {
     }
 
     public void removeAlert(Alert alert, boolean rebuildPanel) {
+        this.plugin.shutdownAdvancedAlertGraph(alert);
         AlertGroup parent = alert.getParent();
         if (parent != null) {
             parent.getAlerts().remove(alert);
@@ -371,7 +348,8 @@ public class AlertManager {
     }
 
     public void loadAlerts() {
-        final String json = this.configManager.getConfiguration(WatchdogConfig.CONFIG_GROUP_NAME, WatchdogConfig.ALERTS);
+        final String data = this.configManager.getConfiguration(WatchdogConfig.CONFIG_GROUP_NAME, WatchdogConfig.ALERTS);
+        final String json = Util.isCompressed(data) ? Util.decompressAlerts(data) : data;
         this.importAlerts(json, this.alerts, false, false, false);
         this.createStarterAlertsIfEmpty();
         this.handleUpgrades();
@@ -389,7 +367,17 @@ public class AlertManager {
             alerts.clear();
         }
 
-        Supplier<Stream<Alert>> alertStream = this.tryImport(json);
+        // Detect versioned wrapper first; fall back to plain alert JSON.
+        // Migrate toAdd before appending so existing alerts are never re-migrated.
+        Supplier<Stream<Alert>> alertStream;
+        VersionedAlertExport versioned = VersionedAlertExport.tryParse(this.gson, json);
+        if (versioned != null) {
+            List<Alert> toAdd = versioned.getAlerts().stream().filter(Objects::nonNull).collect(Collectors.toList());
+            this.alertMigrator.migrate(toAdd, new Version(versioned.getVersion()));
+            alertStream = toAdd::stream;
+        } else {
+            alertStream = this.tryImport(json);
+        }
 
         // Validate regex properties
         if (checkRegex && !alertStream.get().allMatch(alert -> {
@@ -419,9 +407,19 @@ public class AlertManager {
         return true;
     }
 
+    public String exportToJson(List<Alert> alerts) {
+        return this.gson.toJson(new VersionedAlertExport(this.pluginVersion, alerts));
+    }
+
+    public String exportToJsonPretty(List<Alert> alerts) {
+        return this.gson.newBuilder().setPrettyPrinting().create()
+            .toJson(new VersionedAlertExport(this.pluginVersion, alerts));
+    }
+
     public void saveAlerts() {
         String json = this.gson.toJson(this.alerts, ALERT_LIST_TYPE);
-        this.configManager.setConfiguration(WatchdogConfig.CONFIG_GROUP_NAME, WatchdogConfig.ALERTS, json);
+        this.configManager.setConfiguration(WatchdogConfig.CONFIG_GROUP_NAME, WatchdogConfig.ALERTS, Util.compressAlerts(json));
+        this.alertBackupManager.backup(json);
     }
 
     public String toJSON() {
@@ -445,6 +443,26 @@ public class AlertManager {
         this.plugin.getInjector().injectMembers(alert);
         if (alert instanceof AlertGroup) {
             ((AlertGroup) alert).getAlerts().forEach(subAlert -> this.setUpAlert(subAlert, overrideWithDefaults));
+        } else if (alert instanceof AdvancedAlert) {
+            AdvancedAlert advancedAlert = (AdvancedAlert) alert;
+            advancedAlert.getGraph().getNodes().forEach(node -> {
+                if (node instanceof TriggerNode) {
+                    this.setUpAlert(((TriggerNode) node).getAlert(), overrideWithDefaults);
+                } else if (node instanceof ActionNode) {
+                    Notification notification = ((ActionNode) node).getNotification();
+                    if (notification instanceof TextToSpeech) {
+                        TextToSpeech tts = (TextToSpeech) notification;
+                        if (tts.getSource() == TTSSource.ELEVEN_LABS && tts.getElevenLabsVoiceId() != null && !watchdogConfig.elevenLabsAPIKey().isEmpty()) {
+                            ElevenLabs.getVoice(this.plugin.getHttpClient(), tts.getElevenLabsVoiceId(), tts::setElevenLabsVoice, log::error);
+                        }
+                    }
+                    this.plugin.getInjector().injectMembers(notification);
+                    if (overrideWithDefaults) {
+                        notification.setDefaults();
+                    }
+                    notification.setAlert(alert);
+                }
+            });
         } else {
             if (alert.getNotifications() == null) {
                 return;
@@ -452,7 +470,7 @@ public class AlertManager {
             for (INotification notification : alert.getNotifications()) {
                 if (notification instanceof TextToSpeech) {
                     TextToSpeech tts = (TextToSpeech) notification;
-                    if (tts.getSource() == TTSSource.ELEVEN_LABS && tts.getElevenLabsVoiceId() != null) {
+                    if (tts.getSource() == TTSSource.ELEVEN_LABS && tts.getElevenLabsVoiceId() != null && !watchdogConfig.elevenLabsAPIKey().isEmpty()) {
                         ElevenLabs.getVoice(this.plugin.getHttpClient(), tts.getElevenLabsVoiceId(), tts::setElevenLabsVoice, log::error);
                     }
                 }
@@ -471,131 +489,10 @@ public class AlertManager {
         log.debug("currentVersion: {}", currentVersion);
         log.debug("configVersion: {}", configVersion);
         if (currentVersion.compareTo(configVersion) > 0) {
-            log.debug("Checking if data migration needed");
-            // Changed Stat Drain to Stat Change in v2.4.0, so need to swap sign of drainAmount and move to new alert
-            if (configVersion.compareTo(new Version("2.4.0")) < 0) {
-                log.debug("Need to convert StatDrainAlerts to StatChangedAlerts");
-                this.alerts.replaceAll(alert -> {
-                    if (alert instanceof StatDrainAlert) {
-                        StatDrainAlert statDrainAlert = (StatDrainAlert) alert;
-                        StatChangedAlert statChangedAlert = new StatChangedAlert();
-                        statChangedAlert.setName(statDrainAlert.getName());
-                        statChangedAlert.setEnabled(statDrainAlert.isEnabled());
-                        statChangedAlert.setDebounceTime(statDrainAlert.getDebounceTime());
-                        statChangedAlert.setSkill(statDrainAlert.getSkill());
-                        statChangedAlert.setChangedAmount(-statDrainAlert.getDrainAmount());
-                        statChangedAlert.getNotifications().addAll(statDrainAlert.getNotifications());
-                        return statChangedAlert;
-                    }
-
-                    return alert;
-                });
-
-                // Not sure why I thought it was a good idea to store the decibels in the JSON
-                log.debug("Need to convert all Sound and TTS gain back to 0,10 scale.");
-                this.alerts.stream()
-                    .filter(alert -> !(alert instanceof AlertGroup))
-                    .flatMap(alert -> alert.getNotifications().stream())
-                    .filter(notification -> notification instanceof IAudioNotification)
-                    .map(notification -> (IAudioNotification) notification)
-                    .forEach(sound -> sound.setGain(Util.scale(sound.getGain(), -25, 5, 0, 10)));
-            }
-
-            if (configVersion.compareTo(new Version("2.8.0")) < 0) {
-                log.debug("Need to convert flash notifications to new properties");
-                this.alerts.stream()
-                    .filter(alert -> !(alert instanceof AlertGroup))
-                    .flatMap(alert -> alert.getNotifications().stream())
-                    .filter(notification -> notification instanceof ScreenFlash)
-                    .map(notification -> (ScreenFlash) notification)
-                    .forEach(screenFlash -> {
-                        FlashNotification oldEnum = screenFlash.getFlashNotification();
-                        screenFlash.setFlashMode((oldEnum == FlashNotification.SOLID_TWO_SECONDS || oldEnum == FlashNotification.SOLID_UNTIL_CANCELLED) ? FlashMode.SOLID : FlashMode.FLASH);
-                        screenFlash.setFlashDuration((oldEnum == FlashNotification.FLASH_TWO_SECONDS || oldEnum == FlashNotification.SOLID_TWO_SECONDS) ? 2 : 0);
-                        screenFlash.setFlashNotification(null);
-                    });
-            }
-
-            if (configVersion.compareTo(new Version("2.13.0")) < 0) {
-                log.debug("Need to set default overlay notification text color");
-                this.alerts.stream()
-                    .filter(alert -> !(alert instanceof AlertGroup))
-                    .flatMap(alert -> alert.getNotifications().stream())
-                    .filter(notification -> notification instanceof Overlay)
-                    .map(notification -> (Overlay) notification)
-                    .forEach(overlay -> {
-                        if (overlay.getTextColor() == null) {
-                            overlay.setTextColor(WatchdogConfig.DEFAULT_NOTIFICATION_TEXT_COLOR);
-                        }
-                    });
-            }
-
-            if (configVersion.compareTo(new Version("3.14.0")) < 0) {
-                log.debug("Need to migrate pattern matchers from matches to find");
-                this.getAllAlerts()
-                    .filter(alert -> alert instanceof RegexMatcher)
-                    .map(alert -> (RegexMatcher) alert)
-                    .forEach(alert -> {
-                        String prevPattern = alert.getPattern();
-                        if (!prevPattern.isEmpty()) {
-                            upgrade_3_14_0_patterns(
-                                alert::getPattern,
-                                alert::isRegexEnabled,
-                                alert::setPattern,
-                                alert::setRegexEnabled
-                            );
-                            log.debug("Migrating alert {} from {} to {}", ((Alert) alert).getName(), prevPattern, alert.getPattern());
-                        }
-
-                        if (alert instanceof OverheadTextAlert) {
-                            var overHeadTextAlert = (OverheadTextAlert) alert;
-                            if (overHeadTextAlert.getNpcName().isEmpty()) {
-                                return;
-                            }
-                            upgrade_3_14_0_patterns(
-                                overHeadTextAlert::getNpcName,
-                                overHeadTextAlert::isNpcRegexEnabled,
-                                overHeadTextAlert::setNpcName,
-                                overHeadTextAlert::setNpcRegexEnabled
-                            );
-                        }
-                    });
-            }
-
+            log.debug("Running data migration from {} to {}", configVersion, currentVersion);
+            this.alertMigrator.migrate(this.alerts, configVersion);
             this.configManager.setConfiguration(WatchdogConfig.CONFIG_GROUP_NAME, WatchdogConfig.PLUGIN_VERSION, currentVersion.getVersion());
             this.saveAlerts();
         }
     }
-
-    private void upgrade_3_14_0_patterns(
-        Supplier<String> patternSupplier,
-        Supplier<Boolean> regexEnabledSupplier,
-        Consumer<String> patternSave,
-        Consumer<Boolean> regexEnabledSave
-    ) {
-        String pattern = patternSupplier.get();
-        // If the pattern is not a regex, and it doesn't start with * or end with *
-        // then convert it to a regex and proceed with the conversion
-        if (!regexEnabledSupplier.get()) {
-            if (!pattern.startsWith("*") || !pattern.endsWith("*")) {
-                pattern = Util.createRegexFromGlob(pattern);
-                regexEnabledSave.accept(true);
-            } else if (pattern.length() > 1) {
-                pattern = pattern.substring(1, pattern.length() - 1);
-            }
-        }
-
-        if (regexEnabledSupplier.get()) {
-            // if the beginning of the pattern is not a ^ then add one
-            if (!pattern.startsWith("^")) {
-                pattern = "^" + pattern;
-            }
-            // if the end of the pattern is not a $ then add one
-            if (!pattern.endsWith("$")) {
-                pattern = pattern + "$";
-            }
-        }
-
-        patternSave.accept(pattern);
-    };
 }

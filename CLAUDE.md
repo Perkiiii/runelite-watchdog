@@ -52,7 +52,7 @@ When adding a new alert or notification type:
 
 ### Alert Base Class (`Alert.java`)
 
-All alerts share: `enabled`, `name`, `debounceTime`, `debounceResetTime`, `randomNotifications`, and a `List<Notification>`. The `parent` (`AlertGroup`) reference is `@transient` and lazily resolved. `getType()` looks up the `TriggerType` by matching the concrete class.
+All alerts share: `enabled`, `name`, `alertMode`, `debounceTime`, `debounceResetTime`, `randomNotifications`, and a `List<Notification>`. The `parent` (`AlertGroup`) reference is `@transient` and lazily resolved. `getType()` looks up the `TriggerType` by matching the concrete class.
 
 ### Notification Base Class (`Notification.java`)
 
@@ -66,8 +66,34 @@ All alerts share: `enabled`, `name`, `debounceTime`, `debounceResetTime`, `rando
 
 Alerts are serialized to JSON via Gson with `RuntimeTypeAdapterFactory` for polymorphism. Import/export uses GZIP compression + Base64 encoding. The `AlertManager` registers all known alert and notification subtypes at init time — unknown subtypes from old versions are ignored via `.ignoreSubtype()`.
 
+### Node Graph Editor (in-progress, `feat/node-graph-editor` branch)
+
+A visual node-based editor is being built in `com.adamk33n3r.nodegraph` and `ui/nodegraph/`. `NodeGraphLauncher` in test sources can launch the editor standalone for development.
+
+## Style
+
+Always use `this.` when referring to instance properties/methods/etc
+
 ## Testing
 
 Tests use JUnit 4 + Mockito + Guice's `BoundFieldModule`. `TestBase` wires up all required RuneLite mocks and creates a Guice injector. `AlertTestBase` extends this with `EventBus` and `HistoryPanel` mocks.
 
 Fields annotated `@Bind` in test classes are automatically bound in the Guice injector. `@Mock` / `@Spy` (Mockito) can be combined with `@Bind` (Guice).
+
+- Always include unit tests in plans for any new feature or bug fix
+- Write tests before implementation (TDD)
+- Do not write tests for Swing components directly since, but for the code that it uses
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues (uses the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

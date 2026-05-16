@@ -1,5 +1,7 @@
 package com.adamk33n3r.runelite.watchdog.alerts;
 
+import com.adamk33n3r.nodegraph.nodes.ActionNode;
+import com.adamk33n3r.nodegraph.nodes.TriggerNode;
 import com.adamk33n3r.runelite.watchdog.TriggerType;
 import com.adamk33n3r.runelite.watchdog.WatchdogPlugin;
 import com.adamk33n3r.runelite.watchdog.notifications.MessageNotification;
@@ -7,6 +9,7 @@ import com.adamk33n3r.runelite.watchdog.notifications.Notification;
 
 import lombok.*;
 import lombok.experimental.Accessors;
+import lombok.extern.slf4j.Slf4j;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -15,6 +18,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+@Slf4j
 @Getter
 @Setter
 @Accessors(chain = true)
@@ -41,16 +45,21 @@ public abstract class Alert {
         return this.parent;
     }
 
+    @Nullable
     @Setter(AccessLevel.PROTECTED)
     private List<Notification> notifications = new ArrayList<>();
 
     public Alert addNotification(Notification notification) {
-        this.notifications.add(notification);
+        if (this.notifications != null) {
+            this.notifications.add(notification);
+        }
         return this;
     }
 
     public Alert addNotifications(Notification... notifications) {
-        this.notifications.addAll(Arrays.asList(notifications));
+        if (this.notifications != null) {
+            this.notifications.addAll(Arrays.asList(notifications));
+        }
         return this;
     }
 
@@ -59,6 +68,7 @@ public abstract class Alert {
         this.debounceTime = 0;
     }
 
+    @Nullable
     public TriggerType getType() {
         return Arrays.stream(TriggerType.values())
             .filter(tType -> tType.getImplClass() == this.getClass())
@@ -66,22 +76,41 @@ public abstract class Alert {
             .orElse(null);
     }
 
+    public boolean isAllEnabled() {
+        if (!this.isEnabled()) return false;
+        List<AlertGroup> ancestors = this.getAncestors();
+        // Not if any of the ancestors are disabled
+        return ancestors == null || ancestors.stream().allMatch(Alert::isEnabled);
+    }
+
     public void moveNotificationTo(Notification notification, int pos) {
+        if (this.notifications == null) {
+            return;
+        }
         this.notifications.remove(notification);
         this.notifications.add(pos, notification);
     }
 
     public void moveNotificationToTop(Notification notification) {
+        if (this.notifications == null) {
+            return;
+        }
         this.notifications.remove(notification);
         this.notifications.add(0, notification);
     }
 
     public void moveNotificationToBottom(Notification notification) {
+        if (this.notifications == null) {
+            return;
+        }
         this.notifications.remove(notification);
         this.notifications.add(notification);
     }
 
     public void moveNotificationUp(Notification notification) {
+        if (this.notifications == null) {
+            return;
+        }
         int curIdx = this.notifications.indexOf(notification);
         int newIdx = curIdx - 1;
 
@@ -94,6 +123,9 @@ public abstract class Alert {
     }
 
     public void moveNotificationDown(Notification notification) {
+        if (this.notifications == null) {
+            return;
+        }
         int curIdx = this.notifications.indexOf(notification);
         int newIdx = curIdx + 1;
 
@@ -121,15 +153,33 @@ public abstract class Alert {
     }
 
     public List<String> getKeywords() {
+        var type = this.getType();
         Stream<String> selfKeywords = Stream.of(
             this.getName(),
-            this.getType().getName()
+            type == null ? "Unknown" : type.getName()
         );
 
         if (this instanceof AlertGroup) {
             return Stream.concat(selfKeywords, ((AlertGroup) this).getAlerts().stream().flatMap(alert -> alert.getKeywords().stream()))
                 .collect(Collectors.toList());
+        } else if (this instanceof AdvancedAlert) {
+            return Stream.concat(selfKeywords, ((AdvancedAlert) this).getGraph().getNodes().stream().flatMap(node -> {
+                if (node instanceof TriggerNode) {
+                    return ((TriggerNode) node).getAlert().getKeywords().stream();
+                } else if (node instanceof ActionNode) {
+                    Notification notification = ((ActionNode) node).getNotification();
+                    if (notification instanceof MessageNotification) {
+                        return Stream.of(notification.getType().getName(), ((MessageNotification) notification).getMessage());
+                    }
+                    return Stream.of(notification.getType().getName());
+                }
+                return Stream.empty();
+            })).collect(Collectors.toList());
         } else {
+            if (this.getNotifications() == null) {
+                log.error("Could not get notifications for keywords");
+                return selfKeywords.collect(Collectors.toList());
+            }
             return Stream.concat(
                 selfKeywords,
                 this.getNotifications().stream()

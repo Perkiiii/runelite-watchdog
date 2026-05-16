@@ -1,11 +1,14 @@
 package com.adamk33n3r.runelite.watchdog;
 
+import com.adamk33n3r.nodegraph.nodes.TriggerNode;
+import com.adamk33n3r.nodegraph.nodes.constants.Inventory;
+import com.adamk33n3r.nodegraph.nodes.constants.Location;
+import com.adamk33n3r.nodegraph.nodes.constants.PluginState;
 import com.adamk33n3r.runelite.watchdog.alerts.*;
 import com.adamk33n3r.runelite.watchdog.alerts.InventoryAlert.InventoryAlertType;
 import com.adamk33n3r.runelite.watchdog.ui.panels.HistoryPanel;
 
 import lombok.AllArgsConstructor;
-import lombok.Builder;
 import net.runelite.api.*;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
@@ -15,7 +18,9 @@ import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.NotificationFired;
+import net.runelite.client.events.PluginChanged;
 import net.runelite.client.events.PluginMessage;
+import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.util.Text;
 
@@ -31,9 +36,6 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
-import java.util.function.Supplier;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -61,17 +63,33 @@ public class EventHandler {
     private Provider<HistoryPanel> historyPanelProvider;
 
     @Inject
+    private PluginManager pluginManager;
+
+    @Inject
     private WatchdogPlugin plugin;
 
+    @Inject
+    private WatchdogConfig config;
+
     private final Map<Alert, Instant> lastTriggered = new HashMap<>();
+
+    // Cached once per session; reset on logout. Avoids repeated getVarbitValue() calls during region loads.
+    private int cachedAccountType = -1;
 
     private final Map<Skill, Integer> previousSkillLevelTable = new EnumMap<>(Skill.class);
     private final Map<Skill, Integer> previousSkillXPTable = new EnumMap<>(Skill.class);
     private final Map<Integer, ItemComposition> itemCompositionCache = new ConcurrentHashMap<>();
     private Map<Integer, InventoryItemData> previousItemsTable = new ConcurrentHashMap<>();
+    private boolean hasInitializedInventory = false;
+    private long previousInventorySlotCount = 0;
+//    private volatile long currentInventoryItemCount = 0;
+//    private volatile Map<Integer, InventoryItemData> currentItemsSnapshot = new ConcurrentHashMap<>();
     private WorldPoint previousLocation = null;
 
     private boolean firedByWatchdog = false;
+
+    private final ArrayDeque<SpawnedEventData> spawnQueue = new ArrayDeque<>();
+    static final Predicate<SpawnedAlert> ALWAYS = a -> true;
 
     public synchronized void notify(String message) {
         this.firedByWatchdog = true;
@@ -83,6 +101,7 @@ public class EventHandler {
     //region Chat Message
     @Subscribe
     public void onChatMessage(ChatMessage chatMessage) {
+        if (this.plugin.isInBannedArea()) return;
         // Don't process messages sent by this plugin
         if (chatMessage.getName().equals(this.plugin.getName())) {
             return;
@@ -95,6 +114,12 @@ public class EventHandler {
         if (PlayerChatType.ANY.isOfType(chatMessage.getType())) {
             this.alertManager.getAllEnabledAlertsOfType(PlayerChatAlert.class)
                 .filter(chatAlert -> chatAlert.getPlayerChatType() == PlayerChatType.ANY || chatAlert.getPlayerChatType().isOfType(chatMessage.getType()))
+                .filter(chatAlert -> {
+                    return chatAlert.getPlayerChatType() != PlayerChatType.PRIVATE ||
+                        chatAlert.getChatDirection() == PlayerChatAlert.ChatDirection.BOTH ||
+                        (chatAlert.getChatDirection() == PlayerChatAlert.ChatDirection.SENT_ONLY && chatMessage.getType() == ChatMessageType.PRIVATECHATOUT) ||
+                        (chatAlert.getChatDirection() == PlayerChatAlert.ChatDirection.RECEIVED_ONLY && chatMessage.getType() == ChatMessageType.PRIVATECHAT);
+                })
                 .forEach(chatAlert -> {
                     var message = unformattedMessage;
                     if (chatAlert.isPrependSender()) {
@@ -105,6 +130,16 @@ public class EventHandler {
                     if (groups == null) return;
 
                     this.fireAlert(chatAlert, groups);
+                });
+            this.fireAdvancedAlertTriggers(PlayerChatAlert.class,
+                a -> a.getPlayerChatType() == PlayerChatType.ANY || a.getPlayerChatType().isOfType(chatMessage.getType()),
+                a -> {
+                    var msg = unformattedMessage;
+                    if (a.isPrependSender()) {
+                        var playerName = net.runelite.client.util.Text.sanitize(net.runelite.client.util.Text.removeFormattingTags(chatMessage.getName()));
+                        msg = String.format("%s: %s", playerName, msg);
+                    }
+                    return Util.matchPattern(a, msg);
                 });
             return;
         }
@@ -117,12 +152,17 @@ public class EventHandler {
 
                 this.fireAlert(gameAlert, groups);
             });
+
+        this.fireAdvancedAlertTriggers(ChatAlert.class,
+            a -> a.getGameMessageType() == GameMessageType.ANY || a.getGameMessageType().isOfType(chatMessage.getType()),
+            a -> Util.matchPattern(a, unformattedMessage));
     }
     //endregion
 
     //region Notification
     @Subscribe
     public void onNotificationFired(NotificationFired notificationFired) {
+        if (this.plugin.isInBannedArea()) return;
         this.alertManager.getAllEnabledAlertsOfType(NotificationFiredAlert.class)
             .filter(notificationFiredAlert -> !this.firedByWatchdog || notificationFiredAlert.isAllowSelf())
             .forEach(notificationFiredAlert -> {
@@ -131,6 +171,12 @@ public class EventHandler {
 
                 this.fireAlert(notificationFiredAlert, groups);
             });
+
+        if (!this.firedByWatchdog) {
+            this.fireAdvancedAlertTriggers(NotificationFiredAlert.class,
+                a -> a.isAllowSelf() || !this.firedByWatchdog,
+                a -> Util.matchPattern(a, notificationFired.getMessage()));
+        }
     }
     //endregion
 
@@ -141,12 +187,26 @@ public class EventHandler {
 
     //region Stat Changed
     @Subscribe
-    private void onGameStateChanged(GameStateChanged gameStateChanged) {
-        if (gameStateChanged.getGameState() == GameState.LOGIN_SCREEN) {
+    void onGameStateChanged(GameStateChanged gameStateChanged) {
+        GameState state = gameStateChanged.getGameState();
+        if (state == GameState.LOGIN_SCREEN || state == GameState.HOPPING) {
+            this.spawnQueue.clear();
+        }
+        if (state == GameState.LOGIN_SCREEN) {
             this.previousSkillLevelTable.clear();
             this.previousSkillXPTable.clear();
             this.previousItemsTable.clear();
+            this.hasInitializedInventory = false;
+            this.previousInventorySlotCount = 0;
+            this.cachedAccountType = -1;
         }
+    }
+
+    private int getAccountType() {
+        if (this.cachedAccountType == -1) {
+            this.cachedAccountType = this.client.getVarbitValue(VarbitID.IRONMAN);
+        }
+        return this.cachedAccountType;
     }
 
     @Subscribe
@@ -158,7 +218,7 @@ public class EventHandler {
 
     private void handleStatChanged(StatChanged statChanged) {
         Integer previousLevel = this.previousSkillLevelTable.put(statChanged.getSkill(), statChanged.getBoostedLevel());
-        if (previousLevel == null) {
+        if (previousLevel == null || this.plugin.isInBannedArea()) {
             return;
         }
 
@@ -189,11 +249,27 @@ public class EventHandler {
                 return currentIs && prevWasNot;
             })
             .forEach(alert -> this.fireAlert(alert, statChanged.getSkill().getName()));
+
+        final int prevLevel = previousLevel;
+        this.fireAdvancedAlertTriggers(StatChangedAlert.class,
+            a -> {
+                if (a.getSkill() != statChanged.getSkill()) return false;
+                int targetLevel;
+                switch (a.getChangedMode()) {
+                    case RELATIVE: targetLevel = statChanged.getLevel() + a.getChangedAmount(); break;
+                    case ABSOLUTE: targetLevel = a.getChangedAmount(); break;
+                    case PERCENTAGE: targetLevel = (statChanged.getLevel() * a.getChangedAmount()) / 100; break;
+                    default: targetLevel = statChanged.getLevel(); break;
+                }
+                return a.getChangedComparator().compare(statChanged.getBoostedLevel(), targetLevel)
+                    && a.getChangedComparator().converse().compare(prevLevel, targetLevel);
+            },
+            a -> new String[]{ statChanged.getSkill().getName() });
     }
 
     private void handleXPDrop(StatChanged statChanged) {
         Integer previousXP = this.previousSkillXPTable.put(statChanged.getSkill(), statChanged.getXp());
-        if (previousXP == null) {
+        if (previousXP == null || this.plugin.isInBannedArea()) {
             return;
         }
 
@@ -204,17 +280,23 @@ public class EventHandler {
                 return isSkill && alert.getGainedComparator().compare(gainedXP, alert.getGainedAmount());
             })
             .forEach(alert -> this.fireAlert(alert, statChanged.getSkill().getName()));
+
+        this.fireAdvancedAlertTriggers(XPDropAlert.class,
+            a -> a.getSkill() == statChanged.getSkill() && a.getGainedComparator().compare(statChanged.getXp() - (previousXP == null ? 0 : previousXP), a.getGainedAmount()),
+            a -> new String[]{ statChanged.getSkill().getName() });
     }
     //endregion
 
     //region Sound Effects
     @Subscribe
     private void onSoundEffectPlayed(SoundEffectPlayed soundEffectPlayed) {
+        if (this.plugin.isInBannedArea()) return;
         this.handleSoundEffectPlayed(soundEffectPlayed.getSoundId());
     }
 
     @Subscribe
     private void onAreaSoundEffectPlayed(AreaSoundEffectPlayed areaSoundEffectPlayed) {
+        if (this.plugin.isInBannedArea()) return;
         this.handleSoundEffectPlayed(areaSoundEffectPlayed.getSoundId());
     }
 
@@ -222,66 +304,140 @@ public class EventHandler {
         this.alertManager.getAllEnabledAlertsOfType(SoundFiredAlert.class)
             .filter(soundFiredAlert -> soundFiredAlert.getSoundID() == soundID)
             .forEach(alert -> this.fireAlert(alert, "" + soundID));
+
+        this.fireAdvancedAlertTriggers(SoundFiredAlert.class,
+            a -> a.getSoundID() == soundID,
+            a -> new String[]{ "" + soundID });
     }
     //endregion
 
     //region Inventory
     @Subscribe
-    private void onItemContainerChanged(ItemContainerChanged itemContainerChanged) {
+    void onItemContainerChanged(ItemContainerChanged itemContainerChanged) {
         // Ignore everything but inventory
         if (itemContainerChanged.getItemContainer().getId() != InventoryID.INV)
             return;
         Item[] items = itemContainerChanged.getItemContainer().getItems();
-        Map<Integer, InventoryItemData> currentItems = new HashMap<>();
-        Arrays.stream(items)
-            .filter(item -> item.getId() > -1)
-            .forEach(item -> {
-                ItemComposition itemComposition = this.itemCompositionCache.computeIfAbsent(item.getId(), id -> this.itemManager.getItemComposition(id));
-                InventoryItemData inventoryItemData = InventoryItemData.builder()
-                    .itemComposition(itemComposition)
-                    .quantity(item.getQuantity())
-                    .build();
-                currentItems.merge(item.getId(), inventoryItemData, (orig, other) -> InventoryItemData.builder()
-                    .itemComposition(itemComposition)
-                    .quantity(orig.quantity + other.quantity)
-                    .build());
+        long itemCount = Arrays.stream(items).filter(item -> item.getId() > -1).count();
+        InventoryItemData[] slots = new InventoryItemData[items.length];
+        var currentItems = new InventoryItemData.InventoryItemDataMap(itemCount, slots);
+        for (int i = 0; i < items.length; i++) {
+            Item item = items[i];
+            if (item.getId() == -1) continue;
+            ItemComposition itemComposition = this.itemCompositionCache.computeIfAbsent(item.getId(), id -> this.itemManager.getItemComposition(id));
+            InventoryItemData inventoryItemData = InventoryItemData.builder()
+                .itemComposition(itemComposition)
+                .quantity(item.getQuantity())
+                .build();
+            slots[i] = inventoryItemData;
+            currentItems.getItems().merge(item.getId(), inventoryItemData, (orig, other) -> InventoryItemData.builder()
+                .itemComposition(itemComposition)
+                .quantity(orig.getQuantity() + other.getQuantity())
+                .build());
+        }
+
+        this.alertManager.getAllEnabledAlertsOfType(AdvancedAlert.class).forEach(adv -> {
+            adv.getGraph().getNodesOfType(Inventory.class).forEach(inv -> {
+                inv.setValue(currentItems);
             });
-        // Skip firing alerts if there are no previous items, since we just logged in. Even an empty inventory will have a map of -1 itemIds.
-        if (!this.previousItemsTable.isEmpty()) {
-            Map<Integer, InventoryItemData> itemMap = new HashMap<>(currentItems);
-            this.previousItemsTable.forEach((itemID, data) -> itemMap.putIfAbsent(itemID, InventoryItemData.builder()
-                .itemComposition(data.itemComposition)
+        });
+
+        // Skip firing alerts on the very first inventory event after login (no valid previous state yet).
+        if (this.hasInitializedInventory && !this.plugin.isInBannedArea()) {
+            var itemMap = new InventoryItemData.InventoryItemDataMap(currentItems);
+            this.previousItemsTable.forEach((itemID, data) -> itemMap.getItems()
+                .putIfAbsent(itemID, InventoryItemData.builder()
+                .itemComposition(data.getItemComposition())
                 .build()));
-            long itemCount = Arrays.stream(items).filter(item -> item.getId() > -1).count();
             this.alertManager.getAllEnabledAlertsOfType(InventoryAlert.class)
                 .forEach(inventoryAlert -> {
                     InventoryAlertType alertType = inventoryAlert.getInventoryAlertType();
                     switch (alertType) {
                         case FULL:
-                            if (itemCount == 28) this.fireAlert(inventoryAlert, alertType.getName());
+                            if (itemCount == 28 && (!inventoryAlert.isFireOnChange() || this.previousInventorySlotCount != 28))
+                                this.fireAlert(inventoryAlert, alertType.getName());
                             break;
                         case EMPTY:
-                            if (itemCount == 0) this.fireAlert(inventoryAlert, alertType.getName());
-                            break;
-                        case SLOTS:
-                            if (inventoryAlert.getQuantityComparator().compare((int) itemCount, inventoryAlert.getItemQuantity())){
+                            if (itemCount == 0 && (!inventoryAlert.isFireOnChange() || this.previousInventorySlotCount != 0))
                                 this.fireAlert(inventoryAlert, alertType.getName());
-                            }
                             break;
-                        case ITEM:
-                        case ITEM_CHANGE:
-                            Optional<MatchedItem> matchedItems = this.getMatchedItems(inventoryAlert, itemMap);
-                            matchedItems.ifPresent((matched) -> {
-                                int change = alertType == InventoryAlertType.ITEM ? 0 : matched.previousQuantity;
-                                if (inventoryAlert.getQuantityComparator().compare(matched.currentQuantity - change, inventoryAlert.getItemQuantity())) {
-                                    this.fireAlert(inventoryAlert, matchedItems.get().groups.toArray(new String[0]));
-                                }
+                        case SLOTS: {
+                            boolean slotNow = inventoryAlert.getQuantityComparator().compare((int) itemCount, inventoryAlert.getItemQuantity());
+                            boolean slotPrev = inventoryAlert.getQuantityComparator().compare((int) this.previousInventorySlotCount, inventoryAlert.getItemQuantity());
+                            if (slotNow && (!inventoryAlert.isFireOnChange() || !slotPrev))
+                                this.fireAlert(inventoryAlert, alertType.getName());
+                            break;
+                        }
+                        case ITEM: {
+                            Optional<MatchedItem> matchedItems = this.getMatchedItems(inventoryAlert, itemMap.getItems());
+                            matchedItems.ifPresent(matched -> {
+                                boolean condNow = inventoryAlert.getQuantityComparator().compare(matched.currentQuantity, inventoryAlert.getItemQuantity());
+                                boolean condPrev = inventoryAlert.getQuantityComparator().compare(matched.previousQuantity, inventoryAlert.getItemQuantity());
+                                if (condNow && (!inventoryAlert.isFireOnChange() || !condPrev))
+                                    this.fireAlert(inventoryAlert, matched.groups.toArray(new String[0]));
                             });
                             break;
+                        }
+                        case ITEM_CHANGE: {
+                            Optional<MatchedItem> matchedItems = this.getMatchedItems(inventoryAlert, itemMap.getItems());
+                            matchedItems.ifPresent(matched -> {
+                                if (inventoryAlert.getQuantityComparator().compare(matched.currentQuantity - matched.previousQuantity, inventoryAlert.getItemQuantity()))
+                                    this.fireAlert(inventoryAlert, matched.groups.toArray(new String[0]));
+                            });
+                            break;
+                        }
                     }
                 });
+
+            this.alertManager.getAllEnabledAlertsOfType(AdvancedAlert.class).forEach(adv ->
+                adv.getGraph().getTriggerNodesOfType(InventoryAlert.class)
+                    .filter(tn -> tn.getAlert().isEnabled())
+                    .forEach(tn -> {
+                        InventoryAlert inventoryAlert = (InventoryAlert) tn.getAlert();
+                        InventoryAlertType alertType = inventoryAlert.getInventoryAlertType();
+                        String[] groups = null;
+                        switch (alertType) {
+                            case FULL:
+                                if (itemCount == 28 && (!inventoryAlert.isFireOnChange() || this.previousInventorySlotCount != 28))
+                                    groups = new String[]{ alertType.getName() };
+                                break;
+                            case EMPTY:
+                                if (itemCount == 0 && (!inventoryAlert.isFireOnChange() || this.previousInventorySlotCount != 0))
+                                    groups = new String[]{ alertType.getName() };
+                                break;
+                            case SLOTS: {
+                                boolean slotNow = inventoryAlert.getQuantityComparator().compare((int) itemCount, inventoryAlert.getItemQuantity());
+                                boolean slotPrev = inventoryAlert.getQuantityComparator().compare((int) this.previousInventorySlotCount, inventoryAlert.getItemQuantity());
+                                if (slotNow && (!inventoryAlert.isFireOnChange() || !slotPrev))
+                                    groups = new String[]{ alertType.getName() };
+                                break;
+                            }
+                            case ITEM: {
+                                Optional<MatchedItem> matched = this.getMatchedItems(inventoryAlert, itemMap.getItems());
+                                if (matched.isPresent()) {
+                                    boolean condNow = inventoryAlert.getQuantityComparator().compare(matched.get().currentQuantity, inventoryAlert.getItemQuantity());
+                                    boolean condPrev = inventoryAlert.getQuantityComparator().compare(matched.get().previousQuantity, inventoryAlert.getItemQuantity());
+                                    if (condNow && (!inventoryAlert.isFireOnChange() || !condPrev))
+                                        groups = matched.get().groups.toArray(new String[0]);
+                                }
+                                break;
+                            }
+                            case ITEM_CHANGE: {
+                                Optional<MatchedItem> matched = this.getMatchedItems(inventoryAlert, itemMap.getItems());
+                                if (matched.isPresent()) {
+                                    if (inventoryAlert.getQuantityComparator().compare(matched.get().currentQuantity - matched.get().previousQuantity, inventoryAlert.getItemQuantity()))
+                                        groups = matched.get().groups.toArray(new String[0]);
+                                }
+                                break;
+                            }
+                        }
+                        if (groups != null) this.fireAdvancedAlertTriggerNode(adv, tn, groups);
+                    })
+            );
         }
-        this.previousItemsTable = currentItems;
+        this.previousItemsTable = currentItems.getItems();
+        this.previousInventorySlotCount = itemCount;
+        this.hasInitializedInventory = true;
     }
 
     private Optional<MatchedItem> getMatchedItems(InventoryAlert inventoryAlert, Map<Integer, InventoryItemData> allItems) {
@@ -290,13 +446,13 @@ public class EventHandler {
                 || (inventoryAlert.getInventoryMatchType() == InventoryAlert.InventoryMatchType.NOTED && itemData.getValue().isNoted())
                 || (inventoryAlert.getInventoryMatchType() == InventoryAlert.InventoryMatchType.UN_NOTED && !itemData.getValue().isNoted()))
             .map(itemData -> {
-                String[] groups = Util.matchPattern(inventoryAlert, itemData.getValue().itemComposition.getName());
+                String[] groups = Util.matchPattern(inventoryAlert, itemData.getValue().getItemComposition().getName());
                 if (groups == null) return null;
                 var prevItem = this.previousItemsTable.get(itemData.getKey());
                 return new MatchedItem(
                     new ArrayList<>(List.of(groups)), // so that is mutable
-                    prevItem == null ? 0 : prevItem.quantity,
-                    itemData.getValue().quantity
+                    prevItem == null ? 0 : prevItem.getQuantity(),
+                    itemData.getValue().getQuantity()
                 );
             })
             .filter(Objects::nonNull)
@@ -314,32 +470,40 @@ public class EventHandler {
     //region Spawned
     @Subscribe
     private void onItemSpawned(ItemSpawned itemSpawned) {
-        ItemComposition comp = this.itemManager.getItemComposition(itemSpawned.getItem().getId());
-        final int accountType = this.client.getVarbitValue(VarbitID.IRONMAN);
+        if (this.plugin.isInBannedArea()) return;
+        ItemComposition comp = this.itemCompositionCache.computeIfAbsent(itemSpawned.getItem().getId(), this.itemManager::getItemComposition);
+        final int accountType = this.getAccountType();
+        final int ownership = itemSpawned.getItem().getOwnership();
         this.onSpawned(comp.getName(), comp.getId(), itemSpawned.getTile().getWorldLocation(), SPAWNED, ITEM, spawnedAlert ->
-            Util.shouldTriggerItem(spawnedAlert.getItemOwnershipFilterMode(), itemSpawned.getItem().getOwnership(), accountType));
+            Util.shouldTriggerItem(spawnedAlert.getItemOwnershipFilterMode(), ownership, accountType));
     }
     @Subscribe
     private void onItemDespawned(ItemDespawned itemDespawned) {
-        ItemComposition comp = this.itemManager.getItemComposition(itemDespawned.getItem().getId());
-        final int accountType = this.client.getVarbitValue(VarbitID.IRONMAN);
+        if (this.plugin.isInBannedArea()) return;
+        ItemComposition comp = this.itemCompositionCache.computeIfAbsent(itemDespawned.getItem().getId(), this.itemManager::getItemComposition);
+        final int accountType = this.getAccountType();
+        final int ownership = itemDespawned.getItem().getOwnership();
         this.onSpawned(comp.getName(), comp.getId(), itemDespawned.getTile().getWorldLocation(), DESPAWNED, ITEM, spawnedAlert ->
-            Util.shouldTriggerItem(spawnedAlert.getItemOwnershipFilterMode(), itemDespawned.getItem().getOwnership(), accountType));
+            Util.shouldTriggerItem(spawnedAlert.getItemOwnershipFilterMode(), ownership, accountType));
     }
     @Subscribe
     private void onNpcSpawned(NpcSpawned npcSpawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onActorSpawned(npcSpawned.getNpc(), npcSpawned.getNpc().getId(), NPC);
     }
     @Subscribe
     private void onNpcDespawned(NpcDespawned npcDespawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onActorDespawned(npcDespawned.getNpc(), npcDespawned.getNpc().getId(), NPC);
     }
     @Subscribe
     private void onPlayerSpawned(PlayerSpawned playerSpawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onActorSpawned(playerSpawned.getPlayer(), -1, PLAYER);
     }
     @Subscribe
     private void onPlayerDespawned(PlayerDespawned playerDespawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onActorDespawned(playerDespawned.getPlayer(), -1, PLAYER);
     }
     private void onActorSpawned(Actor actor, int id, SpawnedAlert.SpawnedType type) {
@@ -351,37 +515,45 @@ public class EventHandler {
 
     @Subscribe
     private void onGroundObjectSpawned(GroundObjectSpawned groundObjectSpawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onTileObjectSpawned(groundObjectSpawned.getGroundObject(), SPAWNED, GROUND_OBJECT);
     }
     @Subscribe
     private void onGroundObjectDespawned(GroundObjectDespawned groundObjectDespawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onTileObjectSpawned(groundObjectDespawned.getGroundObject(), DESPAWNED, GROUND_OBJECT);
     }
 
     @Subscribe
     private void onDecorativeObjectSpawned(DecorativeObjectSpawned decorativeObjectSpawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onTileObjectSpawned(decorativeObjectSpawned.getDecorativeObject(), SPAWNED, DECORATIVE_OBJECT);
     }
     @Subscribe
     private void onDecorativeObjectDespawned(DecorativeObjectDespawned decorativeObjectDespawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onTileObjectSpawned(decorativeObjectDespawned.getDecorativeObject(), DESPAWNED, DECORATIVE_OBJECT);
     }
 
     @Subscribe
     private void onGameObjectSpawned(GameObjectSpawned gameObjectSpawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onTileObjectSpawned(gameObjectSpawned.getGameObject(), SPAWNED, GAME_OBJECT);
     }
     @Subscribe
     private void onGameObjectDespawned(GameObjectDespawned gameObjectDespawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onTileObjectSpawned(gameObjectDespawned.getGameObject(), DESPAWNED, GAME_OBJECT);
     }
 
     @Subscribe
     private void onWallObjectSpawned(WallObjectSpawned wallObjectSpawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onTileObjectSpawned(wallObjectSpawned.getWallObject(), SPAWNED, WALL_OBJECT);
     }
     @Subscribe
     private void onWallObjectDespawned(WallObjectDespawned wallObjectDespawned) {
+        if (this.plugin.isInBannedArea()) return;
         this.onTileObjectSpawned(wallObjectDespawned.getWallObject(), DESPAWNED, WALL_OBJECT);
     }
 
@@ -393,45 +565,146 @@ public class EventHandler {
         }
         WorldPoint location = tileObject.getWorldLocation();
         if (tileObject instanceof GameObject) {
-            WorldPoint playerLocation = this.client.getLocalPlayer().getWorldLocation();
+            Player localPlayer = this.client.getLocalPlayer();
+            if (localPlayer == null) {
+                return;
+            }
+            WorldPoint playerLocation = localPlayer.getWorldLocation();
             location = Util.getClosestTile(playerLocation, (GameObject) tileObject);
         }
         this.onSpawned(impostor.getName(), impostor.getId(), location, mode, type);
     }
 
     private void onSpawned(@Nullable String name, int id, WorldPoint location, SpawnedAlert.SpawnedDespawned mode, SpawnedAlert.SpawnedType type) {
-        this.onSpawned(name, id, location, mode, type, spawnedAlert -> true);
+        this.onSpawned(name, id, location, mode, type, ALWAYS);
     }
 
-    private void onSpawned(@Nullable String name, int id, WorldPoint location, SpawnedAlert.SpawnedDespawned mode, SpawnedAlert.SpawnedType type, Predicate<SpawnedAlert> additionalFilter) {
-        if (name == null) {
+    void onSpawned(@Nullable String name, int id, WorldPoint location, SpawnedAlert.SpawnedDespawned mode, SpawnedAlert.SpawnedType type, Predicate<SpawnedAlert> additionalFilter) {
+        if (name == null || name.equals("null")) {
+            return;
+        }
+        // Fast path: skip the whole pipeline when no relevant alerts are configured (common during region loads)
+        if (!this.alertManager.hasEnabledAlertsOfType(SpawnedAlert.class) && !this.alertManager.hasEnabledAlertsOfType(AdvancedAlert.class)) {
+            return;
+        }
+
+        if (this.config.batchSpawnedEvents()) {
+            // New path: queue and drain at end of GameTick (see drainSpawnQueue + onGameTick).
+            this.spawnQueue.add(new SpawnedEventData(Text.removeFormattingTags(name), id, location, mode, type, additionalFilter));
+            return;
+        }
+
+        // Legacy path: per-event match + fire.
+        Player localPlayer = this.client.getLocalPlayer();
+        if (localPlayer == null) {
             return;
         }
         String unformattedName = Text.removeFormattingTags(name);
-        int distanceToObject = location.distanceTo(this.client.getLocalPlayer().getWorldLocation());
+        int distanceToObject = location.distanceTo(localPlayer.getWorldLocation());
         this.alertManager.getAllEnabledAlertsOfType(SpawnedAlert.class)
             .filter(spawnedAlert -> spawnedAlert.getSpawnedDespawned() == mode)
             .filter(spawnedAlert -> spawnedAlert.getSpawnedType() == type)
             .filter(spawnedAlert -> spawnedAlert.getDistance() == -1 || spawnedAlert.getDistanceComparator().compare(distanceToObject, spawnedAlert.getDistance()))
             .filter(additionalFilter)
             .forEach(spawnedAlert -> {
-                try {
-                    int parsedID = Integer.parseInt(spawnedAlert.getPattern());
-                    if (id == parsedID) {
-                        this.fireAlert(spawnedAlert, new String[] { spawnedAlert.getPattern() });
+                String pattern = spawnedAlert.getPattern();
+                if (isNumericString(pattern)) {
+                    if (id == Integer.parseInt(pattern)) {
+                        this.fireAlert(spawnedAlert, new String[] { pattern });
                     }
-                } catch (NumberFormatException ignored) {
+                } else {
                     String[] groups = Util.matchPattern(spawnedAlert, unformattedName);
                     if (groups == null) return;
-
                     this.fireAlert(spawnedAlert, groups);
                 }
             });
+
+        this.fireAdvancedAlertTriggers(SpawnedAlert.class,
+            a -> a.getSpawnedDespawned() == mode
+                && a.getSpawnedType() == type
+                && (a.getDistance() == -1 || a.getDistanceComparator().compare(distanceToObject, a.getDistance()))
+                && additionalFilter.test(a),
+            a -> {
+                String pattern = a.getPattern();
+                if (isNumericString(pattern)) {
+                    return id == Integer.parseInt(pattern) ? new String[]{ pattern } : null;
+                }
+                return Util.matchPattern(a, unformattedName);
+            });
+    }
+
+    private static boolean isNumericString(String s) {
+        if (s.isEmpty()) return false;
+        for (int i = 0; i < s.length(); i++) {
+            if (!Character.isDigit(s.charAt(i))) return false;
+        }
+        return true;
+    }
+
+    void drainSpawnQueue() {
+        if (this.spawnQueue.isEmpty()) return;
+
+        Player localPlayer = this.client.getLocalPlayer();
+        if (localPlayer == null) {
+            this.spawnQueue.clear();
+            return;
+        }
+        WorldPoint playerLoc = localPlayer.getWorldLocation();
+
+        List<SpawnedEventData> events = new ArrayList<>(this.spawnQueue);
+        this.spawnQueue.clear();
+
+        // Plain SpawnedAlerts: outer = alert, inner = events, break on first match per tick.
+        this.alertManager.getAllEnabledAlertsOfType(SpawnedAlert.class).forEach(alert -> {
+            for (SpawnedEventData ev : events) {
+                String[] groups = matchSpawnedAlert(alert, ev, playerLoc);
+                if (groups == null) continue;
+                this.fireAlert(alert, groups);
+                break;
+            }
+        });
+
+        // AdvancedAlert graph triggers: per-event (graph state must see every event), but lift
+        // the alert stream materialization out of the per-event loop.
+        List<AdvancedAlert> advAlerts = this.alertManager
+            .getAllEnabledAlertsOfType(AdvancedAlert.class)
+            .collect(Collectors.toList());
+        if (advAlerts.isEmpty()) return;
+
+        for (SpawnedEventData ev : events) {
+            for (AdvancedAlert adv : advAlerts) {
+                adv.getGraph().getTriggerNodesOfType(SpawnedAlert.class)
+                    .filter(tn -> tn.getAlert().isEnabled())
+                    .forEach(tn -> {
+                        SpawnedAlert a = (SpawnedAlert) tn.getAlert();
+                        String[] groups = matchSpawnedAlert(a, ev, playerLoc);
+                        if (groups == null) return;
+                        this.fireAdvancedAlertTriggerNode(adv, tn, groups);
+                    });
+            }
+        }
+    }
+
+    private static String[] matchSpawnedAlert(SpawnedAlert alert, SpawnedEventData ev, WorldPoint playerLoc) {
+        if (alert.getSpawnedDespawned() != ev.despawned) return null;
+        if (alert.getSpawnedType() != ev.type) return null;
+        if (alert.getDistance() != -1) {
+            int dist = ev.location.distanceTo(playerLoc);
+            if (!alert.getDistanceComparator().compare(dist, alert.getDistance())) return null;
+        }
+        if (!ev.additionalFilter.test(alert)) return null;
+
+        String pattern = alert.getPattern();
+        if (isNumericString(pattern)) {
+            return ev.id == Integer.parseInt(pattern) ? new String[]{ pattern } : null;
+        }
+        return Util.matchPattern(alert, ev.unformattedName);
     }
     //endregion
 
     @Subscribe
     private void onOverheadTextChanged(OverheadTextChanged overheadTextChanged) {
+        if (this.plugin.isInBannedArea()) return;
         this.alertManager.getAllEnabledAlertsOfType(OverheadTextAlert.class)
             .filter(alert -> alert.getNpcName().isEmpty() || Util.matchPattern(alert::getNpcName, alert::isNpcRegexEnabled, overheadTextChanged.getActor().getName()) != null)
             .forEach(alert -> {
@@ -440,13 +713,21 @@ public class EventHandler {
 
                 this.fireAlert(alert, groups);
             });
+
+        this.fireAdvancedAlertTriggers(OverheadTextAlert.class,
+            a -> a.getNpcName().isEmpty() || Util.matchPattern(a::getNpcName, a::isNpcRegexEnabled, overheadTextChanged.getActor().getName()) != null,
+            a -> Util.matchPattern(a, overheadTextChanged.getOverheadText()));
     }
 
     @Subscribe
     private void onGameTick(GameTick gameTick) {
         // Location alerts
-        var world = this.client.getLocalPlayer().getWorldLocation();
-        var worldView = this.client.getLocalPlayer().getWorldView();
+        Player localPlayer = this.client.getLocalPlayer();
+        if (localPlayer == null) {
+            return;
+        }
+        var world = localPlayer.getWorldLocation();
+        var worldView = localPlayer.getWorldView();
         var localWorld = LocalPoint.fromWorld(worldView, world);
         // Should never be null
         if (localWorld == null) {
@@ -454,16 +735,108 @@ public class EventHandler {
         }
         var worldLocation = WorldPoint.fromLocalInstance(this.client, localWorld);
 //        log.debug("local: {} | world: {} | localWorld: {} | newWorld: {} - {}", this.client.getLocalPlayer().getLocalLocation(), world, localWorld, worldLocation, worldLocation.getRegionID());
-        this.alertManager.getAllEnabledAlertsOfType(LocationAlert.class)
-            .filter(locationAlert -> locationAlert.shouldFire(worldLocation))
-            .forEach(locationAlert -> {
-                // If we're not repeating, don't fire if previous location is within the area
-                if (!locationAlert.isRepeat() && locationAlert.shouldFire(this.previousLocation)) {
-                    return;
-                }
-                this.fireAlert(locationAlert, new String[] { String.valueOf(worldLocation.getX()), String.valueOf(worldLocation.getY()) });
-            });
+        if (!this.plugin.isInBannedArea()) {
+            this.alertManager.getAllEnabledAlertsOfType(LocationAlert.class)
+                .filter(locationAlert -> locationAlert.shouldFire(worldLocation))
+                .forEach(locationAlert -> {
+                    // If we're not repeating, don't fire if previous location is within the area
+                    if (!locationAlert.isRepeat() && locationAlert.shouldFire(this.previousLocation)) {
+                        return;
+                    }
+                    this.fireAlert(locationAlert, new String[] { String.valueOf(worldLocation.getX()), String.valueOf(worldLocation.getY()) });
+                });
+
+            final WorldPoint prevLoc = this.previousLocation;
+            this.fireAdvancedAlertTriggers(LocationAlert.class,
+                a -> a.shouldFire(worldLocation) && (a.isRepeat() || !a.shouldFire(prevLoc)),
+                a -> new String[]{ String.valueOf(worldLocation.getX()), String.valueOf(worldLocation.getY()) });
+        }
+
         this.previousLocation = worldLocation;
+
+        // Push game state into variable nodes in AdvancedAlert graphs
+        this.updateVariableNodes(worldLocation);
+
+        if (!this.plugin.isInBannedArea()) {
+            this.drainSpawnQueue();
+        }
+    }
+
+    public void initializePluginVars() {
+        this.alertManager.getAllEnabledAlertsOfType(AdvancedAlert.class).forEach(adv ->
+            adv.getGraph().getNodesOfType(PluginState.class)
+                .filter(pv -> pv.getPluginName().getValue() != null)
+                .forEach(pv ->
+                    this.pluginManager.getPlugins().stream()
+                        .filter(p -> p.getName().equals(pv.getPluginName().getValue()))
+                        .findFirst()
+                        .ifPresent(plugin -> pv.setValue(this.pluginManager.isPluginEnabled(plugin)))
+                )
+        );
+    }
+
+    @Subscribe
+    private void onPluginChanged(PluginChanged event) {
+        if (this.plugin.isInBannedArea()) return;
+        String changedPluginName = event.getPlugin().getName();
+        boolean isLoaded = event.isLoaded();
+        this.alertManager.getAllEnabledAlertsOfType(AdvancedAlert.class).forEach(adv ->
+            adv.getGraph().getNodesOfType(PluginState.class)
+                .filter(pv -> changedPluginName.equals(pv.getPluginName().getValue()))
+                .forEach(pv -> pv.setValue(isLoaded))
+        );
+    }
+
+    private void updateVariableNodes(WorldPoint worldLocation) {
+        this.alertManager.getAllEnabledAlertsOfType(AdvancedAlert.class).forEach(adv -> {
+            // Location variable nodes: push current WorldPoint
+            adv.getGraph().getNodesOfType(Location.class)
+                .forEach(loc -> loc.setValue(worldLocation));
+        });
+    }
+
+    private final Map<AdvancedAlert, Map<TriggerNode, Instant>> lastTriggeredAdvanced = new ConcurrentHashMap<>();
+
+    /**
+     * Fires all AdvancedAlerts that have TriggerNodes of the given alert class matching the predicate.
+     * Applies the AdvancedAlert's own debounce per trigger node.
+     */
+    private <T extends Alert> void fireAdvancedAlertTriggers(
+        Class<T> alertClass,
+        java.util.function.Predicate<T> matcher,
+        java.util.function.Function<T, String[]> groupsExtractor
+    ) {
+        this.alertManager.getAllEnabledAlertsOfType(AdvancedAlert.class).forEach(adv ->
+            adv.getGraph().getTriggerNodesOfType(alertClass)
+                .filter(tn -> tn.getAlert().isEnabled())
+                .filter(tn -> matcher.test(alertClass.cast(tn.getAlert())))
+                .forEach(tn -> {
+                    String[] groups = groupsExtractor.apply(alertClass.cast(tn.getAlert()));
+                    if (groups == null) return;
+                    this.fireAdvancedAlertTriggerNode(adv, tn, groups);
+                })
+        );
+    }
+
+    private void fireAdvancedAlertTriggerNode(AdvancedAlert alert, TriggerNode triggerNode, String[] triggerValues) {
+        if (this.plugin.isInBannedArea()) return;
+        if (!alert.isAllEnabled()) return;
+
+        Map<TriggerNode, Instant> nodeLastTriggered = this.lastTriggeredAdvanced.computeIfAbsent(alert, k -> new ConcurrentHashMap<>());
+        int debounce = triggerNode.getAlert().getDebounceTime();
+        if (debounce > 0) {
+            Instant last = nodeLastTriggered.get(triggerNode);
+            if (last != null && Instant.now().compareTo(last.plusMillis(debounce)) < 0) {
+                if (triggerNode.getAlert().isDebounceResetTime()) {
+                    nodeLastTriggered.put(triggerNode, Instant.now());
+                }
+                return;
+            }
+        }
+        nodeLastTriggered.put(triggerNode, Instant.now());
+        SwingUtilities.invokeLater(() -> this.historyPanelProvider.get().addEntry(alert, triggerValues));
+        alert.setErrorHandler((adv, t) -> SwingUtilities.invokeLater(() -> this.historyPanelProvider.get().addError(adv, t)));
+        alert.fireTriggerNode(triggerNode, triggerValues);
     }
 
     private void fireAlert(Alert alert, String triggerValue) {
@@ -471,6 +844,7 @@ public class EventHandler {
     }
 
     private void fireAlert(Alert alert, String[] triggerValues) {
+        if (this.plugin.isInBannedArea()) return;
         // Don't fire if it is disabled
         if (!alert.isEnabled()) return;
 
@@ -511,13 +885,4 @@ public class EventHandler {
         private int currentQuantity;
     }
 
-    @Builder
-    private static class InventoryItemData {
-        private ItemComposition itemComposition;
-        private int quantity;
-
-        public boolean isNoted() {
-            return itemComposition.getNote() != -1;
-        }
-    }
 }

@@ -138,7 +138,9 @@ public class Util {
         Supplier<Boolean> regexEnabled,
         String input
     ) {
-        String regex = regexEnabled.get() ? pattern.get() : Util.createRegexFromGlob(pattern.get());
+        String rawPattern = pattern.get();
+        if (rawPattern == null || rawPattern.isEmpty()) return null;
+        String regex = regexEnabled.get() ? rawPattern : Util.createRegexFromGlob(rawPattern);
         Matcher matcher = Pattern.compile(regex, regexEnabled.get() ? 0 : Pattern.CASE_INSENSITIVE).matcher(input);
         if (!matcher.find()) return null;
 
@@ -207,6 +209,11 @@ public class Util {
         }
 
         return new Color((alpha << 24) | (color.getRGB() & 0xFFFFFF), true);
+    }
+
+    public static Color textColorForBG(Color bgColor) {
+        double luminance = (0.299 * bgColor.getRed() + 0.587 * bgColor.getGreen() + 0.114 * bgColor.getBlue()) / 255;
+        return luminance > 0.5 ? Color.BLACK : Color.WHITE;
     }
 
     public static WorldPoint getClosestTile(WorldPoint playerLocation, GameObject gameObject) {

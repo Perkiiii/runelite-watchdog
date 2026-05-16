@@ -1,0 +1,57 @@
+package com.adamk33n3r.nodegraph.nodes;
+
+import com.adamk33n3r.nodegraph.Node;
+import com.adamk33n3r.nodegraph.ExecSignal;
+import com.adamk33n3r.nodegraph.VarInput;
+import com.adamk33n3r.nodegraph.VarOutput;
+import com.adamk33n3r.runelite.watchdog.notifications.Notification;
+import lombok.*;
+
+@Getter
+public class ActionNode extends Node {
+    private final Notification notification;
+
+    private final VarInput<Boolean> enabled = new VarInput<>(this, "Enabled", Boolean.class, true);
+    private final VarInput<Boolean> fireWhenFocused = new VarInput<>(this, "Fire When Focused", Boolean.class, true);
+    private final VarInput<Boolean> fireWhenAfk = new VarInput<>(this, "Fire When AFK", Boolean.class, false);
+    private final VarInput<Number> fireWhenAfkSeconds = new VarInput<>(this, "Fire When AFK Seconds", Number.class, 0);
+    private final VarInput<ExecSignal> exec = new VarInput<>(this, "Exec", ExecSignal.class, new ExecSignal(new String[0]));
+    private final VarOutput<ExecSignal> execOut = new VarOutput<>(this, "Exec", ExecSignal.class, new ExecSignal(new String[0]));
+
+    // Could maybe output "if fired" or something
+
+    public ActionNode(Notification notification) {
+        this.notification = notification;
+        this.exec.setAllowMultipleConnections(true);
+
+        this.fireWhenFocused.setValue(this.notification.isFireWhenFocused());
+        this.fireWhenFocused.onChange(this.notification::setFireWhenFocused);
+        this.fireWhenAfk.setValue(this.notification.isFireWhenAFK());
+        this.fireWhenAfk.onChange(this.notification::setFireWhenAFK);
+        this.fireWhenAfkSeconds.setValue(this.notification.getFireWhenAFKForSeconds());
+        this.fireWhenAfkSeconds.onChange((val) -> this.notification.setFireWhenAFKForSeconds(val.intValue()));
+
+        reg(this.enabled);
+        reg(this.fireWhenFocused);
+        reg(this.fireWhenAfk);
+        reg(this.fireWhenAfkSeconds);
+        reg(this.exec);
+        reg(this.execOut);
+    }
+
+    @Override
+    public void process() {
+        this.notification.setFireWhenFocused(this.fireWhenFocused.getValue());
+        this.notification.setFireWhenAFK(this.fireWhenAfk.getValue());
+        this.notification.setFireWhenAFKForSeconds(this.fireWhenAfkSeconds.getValue().intValue());
+    }
+
+    public void fire() {
+        this.fire(this.exec.getValue().getCaptureGroups());
+    }
+
+    public void fire(String[] captureGroups) {
+        this.notification.fire(captureGroups);
+        this.execOut.setValue(new ExecSignal(captureGroups));
+    }
+}

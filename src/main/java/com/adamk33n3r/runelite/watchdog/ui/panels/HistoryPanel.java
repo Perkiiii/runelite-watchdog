@@ -81,21 +81,37 @@ public class HistoryPanel extends PluginPanel {
         this.repaint();
     }
 
+    public void addError(Alert alert, Throwable error) {
+        this.noHistory.setVisible(false);
+        HistoryEntryPanel panel = new HistoryEntryPanel(alert, new String[0], error);
+        this.previousAlerts.add(0, panel);
+        this.historyItems.add(panel, 0);
+        if (this.historyItems.getComponents().length > MAX_HISTORY_ITEMS) {
+            this.previousAlerts.remove(this.previousAlerts.size() - 1);
+            this.historyItems.remove(this.historyItems.getComponents().length - 1);
+        }
+        this.revalidate();
+        this.repaint();
+    }
+
     // TODO: Abstract this out into a filterpanel type thing
     private void updateFilter(String search) {
         this.historyItems.removeAll();
         this.previousAlerts.stream().filter(historyEntryPanel -> {
             Alert alert = historyEntryPanel.getAlert();
-            Stream<String> keywords = Stream.concat(Stream.of(
+            Stream<String> keywords = Stream.of(
                 alert.getName(),
                 alert.getType().getName()
-            ), alert.getNotifications().stream().flatMap(notification -> {
-                Stream<String> notificationType = Stream.of(notification.getType().getName());
-                if (notification instanceof IMessageNotification) {
-                    return Stream.concat(notificationType, Stream.of(((IMessageNotification) notification).getMessage()));
-                }
-                return notificationType;
-            }));
+            );
+            if (alert.getNotifications() != null) {
+                keywords = Stream.concat(keywords, alert.getNotifications().stream().flatMap(notification -> {
+                    Stream<String> notificationType = Stream.of(notification.getType().getName());
+                    if (notification instanceof IMessageNotification) {
+                        return Stream.concat(notificationType, Stream.of(((IMessageNotification) notification).getMessage()));
+                    }
+                    return notificationType;
+                }));
+            }
             return Util.searchText(search, keywords.collect(Collectors.toList()));
         }).forEach(this.historyItems::add);
         this.revalidate();

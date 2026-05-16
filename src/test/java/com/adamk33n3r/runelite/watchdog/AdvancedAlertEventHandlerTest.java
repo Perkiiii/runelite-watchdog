@@ -1,0 +1,221 @@
+package com.adamk33n3r.runelite.watchdog;
+
+import com.adamk33n3r.nodegraph.nodes.TriggerNode;
+import com.adamk33n3r.nodegraph.nodes.constants.PluginState;
+import com.adamk33n3r.runelite.watchdog.alerts.AdvancedAlert;
+import com.adamk33n3r.runelite.watchdog.alerts.ChatAlert;
+
+import net.runelite.api.ChatMessageType;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.client.plugins.Plugin;
+
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mockito;
+import org.mockito.junit.MockitoJUnitRunner;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+import static org.junit.Assert.*;
+
+@RunWith(MockitoJUnitRunner.class)
+public class AdvancedAlertEventHandlerTest extends AlertTestBase {
+
+    @InjectMocks
+    EventHandler eventHandler;
+
+    private AdvancedAlert advSpy;
+    private TriggerNode triggerNode;
+    private ChatAlert chatAlert;
+
+    @Before
+    public void setup() {
+        chatAlert = new ChatAlert("chat test");
+        chatAlert.setMessage("hello *");
+        triggerNode = new TriggerNode(chatAlert);
+
+        advSpy = Mockito.spy(new AdvancedAlert("event test"));
+        advSpy.getGraph().add(triggerNode);
+
+        // Return the spy AdvancedAlert for AdvancedAlert queries, empty for everything else
+        Mockito.doAnswer(inv -> {
+            Class<?> clazz = inv.getArgument(0);
+            if (clazz == AdvancedAlert.class) return Stream.of(advSpy);
+            return Stream.empty();
+        }).when(alertManager).getAllEnabledAlertsOfType(Mockito.any());
+    }
+
+    private ChatMessage mockGameMessage(String text) {
+        ChatMessage msg = Mockito.mock(ChatMessage.class);
+        Mockito.when(msg.getName()).thenReturn("SomeOtherPlayer");
+        Mockito.when(msg.getType()).thenReturn(ChatMessageType.GAMEMESSAGE);
+        Mockito.when(msg.getMessage()).thenReturn(text);
+        return msg;
+    }
+
+    @Test
+    public void chatMessage_matchingPattern_firesTriggerNode() {
+        eventHandler.onChatMessage(mockGameMessage("hello world"));
+
+        Mockito.verify(advSpy).fireTriggerNode(Mockito.eq(triggerNode), Mockito.any());
+    }
+
+    @Test
+    public void chatMessage_nonMatchingPattern_doesNotFire() {
+        eventHandler.onChatMessage(mockGameMessage("goodbye world"));
+
+        Mockito.verify(advSpy, Mockito.never()).fireTriggerNode(Mockito.any(), Mockito.any());
+    }
+
+    @Test
+    public void disabledAdvancedAlert_doesNotFire() {
+        advSpy.setEnabled(false);
+        eventHandler.onChatMessage(mockGameMessage("hello world"));
+
+        Mockito.verify(advSpy, Mockito.never()).fireTriggerNode(Mockito.any(), Mockito.any());
+    }
+
+    @Test
+    public void disabledTriggerNode_doesNotFire() {
+        chatAlert.setEnabled(false);
+        eventHandler.onChatMessage(mockGameMessage("hello world"));
+
+        Mockito.verify(advSpy, Mockito.never()).fireTriggerNode(Mockito.any(), Mockito.any());
+    }
+
+    @Test
+    public void captureGroups_passedCorrectlyToTriggerNode() {
+        // {*} → (.*) in regex, so "hello {*}" captures everything after "hello "
+        chatAlert.setMessage("hello {*}");
+        ArgumentCaptor<String[]> captor = ArgumentCaptor.forClass(String[].class);
+
+        eventHandler.onChatMessage(mockGameMessage("hello Adam"));
+
+        Mockito.verify(advSpy).fireTriggerNode(Mockito.eq(triggerNode), captor.capture());
+        assertArrayEquals(new String[]{"Adam"}, captor.getValue());
+    }
+
+    @Test
+    public void multipleTriggers_eachFireOnMatchingMessage() {
+        ChatAlert chatAlert2 = new ChatAlert("second");
+        chatAlert2.setMessage("bye *");
+        TriggerNode triggerNode2 = new TriggerNode(chatAlert2);
+        advSpy.getGraph().add(triggerNode2);
+
+        eventHandler.onChatMessage(mockGameMessage("hello world"));
+        eventHandler.onChatMessage(mockGameMessage("bye world"));
+
+        Mockito.verify(advSpy, Mockito.times(1))
+            .fireTriggerNode(Mockito.eq(triggerNode), Mockito.any());
+        Mockito.verify(advSpy, Mockito.times(1))
+            .fireTriggerNode(Mockito.eq(triggerNode2), Mockito.any());
+    }
+
+    @Test
+    public void sameMessage_doesNotFireWrongTrigger() {
+        ChatAlert chatAlert2 = new ChatAlert("second");
+        chatAlert2.setMessage("bye *");
+        TriggerNode triggerNode2 = new TriggerNode(chatAlert2);
+        advSpy.getGraph().add(triggerNode2);
+
+        eventHandler.onChatMessage(mockGameMessage("hello world"));
+
+        Mockito.verify(advSpy, Mockito.times(1))
+            .fireTriggerNode(Mockito.eq(triggerNode), Mockito.any());
+        Mockito.verify(advSpy, Mockito.never())
+            .fireTriggerNode(Mockito.eq(triggerNode2), Mockito.any());
+    }
+
+    @Test
+    public void initializePluginVars_enabledPlugin_setsTrue() {
+        Plugin mockPlugin = Mockito.mock(Plugin.class);
+        Mockito.when(mockPlugin.getName()).thenReturn("Bank");
+        Mockito.when(pluginManager.getPlugins()).thenReturn(List.of(mockPlugin));
+        Mockito.when(pluginManager.isPluginEnabled(mockPlugin)).thenReturn(true);
+
+        PluginState pv = new PluginState();
+        pv.getPluginName().setValue("Bank");
+        advSpy.getGraph().add(pv);
+
+        eventHandler.initializePluginVars();
+
+        assertTrue(pv.getValueOut().getValue());
+    }
+
+    @Test
+    public void initializePluginVars_disabledPlugin_setsFalse() {
+        Plugin mockPlugin = Mockito.mock(Plugin.class);
+        Mockito.when(mockPlugin.getName()).thenReturn("Bank");
+        Mockito.when(pluginManager.getPlugins()).thenReturn(List.of(mockPlugin));
+        Mockito.when(pluginManager.isPluginEnabled(mockPlugin)).thenReturn(false);
+
+        PluginState pv = new PluginState();
+        pv.getPluginName().setValue("Bank");
+        pv.setValue(true); // start true to confirm it gets corrected to false
+        advSpy.getGraph().add(pv);
+
+        eventHandler.initializePluginVars();
+
+        assertFalse(pv.getValueOut().getValue());
+    }
+
+    @Test
+    public void initializePluginVars_nullPluginName_skipped() {
+        PluginState pv = new PluginState(); // pluginName is null by default
+        advSpy.getGraph().add(pv);
+
+        eventHandler.initializePluginVars();
+
+        Mockito.verify(pluginManager, Mockito.never()).isPluginEnabled(Mockito.any());
+        Mockito.verify(pluginManager, Mockito.never()).getPlugins();
+    }
+
+    @Test
+    public void initializePluginVars_unknownPluginName_notUpdated() {
+        Plugin mockPlugin = Mockito.mock(Plugin.class);
+        Mockito.when(mockPlugin.getName()).thenReturn("OtherPlugin");
+        Mockito.when(pluginManager.getPlugins()).thenReturn(List.of(mockPlugin));
+
+        PluginState pv = new PluginState();
+        pv.getPluginName().setValue("NonExistentPlugin");
+        advSpy.getGraph().add(pv);
+
+        eventHandler.initializePluginVars();
+
+        Mockito.verify(pluginManager, Mockito.never()).isPluginEnabled(Mockito.any());
+        assertFalse(pv.getValueOut().getValue());
+    }
+
+    @Test
+    public void advancedAlert_debounce_usesTriggerNodeAlertValue() throws InterruptedException {
+        // triggerNode's embedded chatAlert has 500ms debounce; AdvancedAlert has none
+        chatAlert.setDebounceTime(500);
+        advSpy.setDebounceTime(0);
+
+        eventHandler.onChatMessage(mockGameMessage("hello world"));
+        eventHandler.onChatMessage(mockGameMessage("hello world"));
+
+        // Second fire should be debounced because triggerNode.alert.debounceTime=500ms
+        Mockito.verify(advSpy, Mockito.times(1)).fireTriggerNode(Mockito.eq(triggerNode), Mockito.any());
+    }
+
+    @Test
+    public void advancedAlert_debounceReset_usesTriggerNodeAlertValue() throws InterruptedException {
+        // triggerNode's alert has debounce + reset; AdvancedAlert has neither
+        chatAlert.setDebounceTime(500);
+        chatAlert.setDebounceResetTime(true);
+        advSpy.setDebounceTime(0);
+        advSpy.setDebounceResetTime(false);
+
+        eventHandler.onChatMessage(mockGameMessage("hello world")); // sets lastTriggered
+        eventHandler.onChatMessage(mockGameMessage("hello world")); // within debounce → reset lastTriggered, no fire
+        // After reset the window is extended — a third immediate call is still debounced
+        eventHandler.onChatMessage(mockGameMessage("hello world"));
+
+        Mockito.verify(advSpy, Mockito.times(1)).fireTriggerNode(Mockito.eq(triggerNode), Mockito.any());
+    }
+}

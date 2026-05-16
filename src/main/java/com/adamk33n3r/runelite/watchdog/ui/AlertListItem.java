@@ -99,6 +99,7 @@ public class AlertListItem extends JPanel {
                 this.alert.setEnabled(toggleButton.isSelected());
                 if (!toggleButton.isSelected()) {
                     WatchdogPlugin.getInstance().stopAlertProcessors(this.alert);
+                    WatchdogPlugin.getInstance().shutdownAdvancedAlertGraph(this.alert);
                 }
                 this.alertManager.saveAlerts();
             });

@@ -1,34 +1,32 @@
 package com.adamk33n3r.runelite.watchdog.ui.notifications.panels;
 
 import com.adamk33n3r.runelite.watchdog.notifications.Counter;
-import com.adamk33n3r.runelite.watchdog.ui.panels.NotificationsPanel;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
+
 import lombok.extern.slf4j.Slf4j;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.JLabel;
+import javax.swing.JSpinner;
+import java.awt.Font;
 
 @Slf4j
-public class CounterNotificationPanel extends NotificationPanel {
-    public CounterNotificationPanel(Counter notification, NotificationsPanel parentPanel, Runnable onChangeListener, PanelUtils.OnRemove onRemove) {
-        super(notification, parentPanel, onChangeListener, onRemove);
+public class CounterNotificationPanel extends NotificationContentPanel<Counter> {
 
-        this.rebuild();
+    public CounterNotificationPanel(Counter notification, Runnable onChange) {
+        super(notification, onChange);
+        this.init();
     }
 
-    private void rebuild() {
-        this.settings.removeAll();
-
-        Counter notification = (Counter) this.notification;
-
+    @Override
+    protected void buildContent() {
         JLabel updateLabel = new JLabel("<html>This UI will not update live. Back out and re-enter alert to see actual value</html>");
         updateLabel.setFont(new Font(updateLabel.getFont().getFontName(), Font.ITALIC | Font.BOLD, updateLabel.getFont().getSize()));
-        this.settings.add(updateLabel);
+        this.add(updateLabel);
 
-        JSpinner spinner = PanelUtils.createSpinner(notification.getValue(), 0, Integer.MAX_VALUE, 1, val -> {
-            notification.setValue(val);
-            onChangeListener.run();
+        JSpinner spinner = PanelUtils.createSpinner(this.notification.getValue(), 0, Integer.MAX_VALUE, 1, val -> {
+            this.notification.setValue(val);
+            this.onChange.run();
         });
-        this.settings.add(spinner);
+        this.add(spinner);
     }
 }

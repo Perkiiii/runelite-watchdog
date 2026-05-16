@@ -2,20 +2,16 @@ package com.adamk33n3r.runelite.watchdog.ui.panels;
 
 import com.adamk33n3r.runelite.watchdog.*;
 import com.adamk33n3r.runelite.watchdog.alerts.Alert;
-import com.adamk33n3r.runelite.watchdog.notifications.*;
-import com.adamk33n3r.runelite.watchdog.notifications.Popup;
-import com.adamk33n3r.runelite.watchdog.notifications.objectmarkers.ObjectMarker;
+import com.adamk33n3r.runelite.watchdog.notifications.Notification;
+import com.adamk33n3r.runelite.watchdog.NotificationType;
+import com.adamk33n3r.runelite.watchdog.NotificationCategory;
 import com.adamk33n3r.runelite.watchdog.ui.Icons;
 import com.adamk33n3r.runelite.watchdog.ui.StretchedStackedLayout;
 import com.adamk33n3r.runelite.watchdog.ui.dropdownbutton.DropDownButtonFactory;
-import com.adamk33n3r.runelite.watchdog.ui.notifications.panels.PluginMessageNotificationPanel;
-import com.adamk33n3r.runelite.watchdog.ui.notifications.panels.*;
+import com.adamk33n3r.runelite.watchdog.ui.notifications.panels.NotificationPanel;
 
-import net.runelite.client.config.ConfigManager;
-import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.ui.DynamicGridLayout;
 import net.runelite.client.ui.components.DragAndDropReorderPane;
-import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 
 import com.google.inject.Injector;
 import lombok.Getter;
@@ -35,13 +31,7 @@ public class NotificationsPanel extends JPanel {
     private Alert alert;
 
     @Inject
-    private ColorPickerManager colorPickerManager;
-
-    @Inject
-    private ConfigManager configManager;
-
-    @Inject
-    private PluginManager pluginManager;
+    private NotificationPanelFactory notificationPanelFactory;
 
     @Inject
     private WatchdogConfig config;
@@ -133,8 +123,10 @@ public class NotificationsPanel extends JPanel {
         JScrollPane scrollPane = new JScrollPane(scrollablePanel, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         this.add(scrollPane, BorderLayout.CENTER);
 
-        for (Notification notification : this.alert.getNotifications()) {
-            this.addPanel(notification);
+        if (this.alert.getNotifications() != null) {
+            for (Notification notification : this.alert.getNotifications()) {
+                this.addPanel(notification);
+            }
         }
     }
 
@@ -142,58 +134,15 @@ public class NotificationsPanel extends JPanel {
         PanelUtils.OnRemove removeNotification = (removedPanel) -> {
             WatchdogPlugin.getInstance().getScreenMarkerUtil().finishCreation(true);
             WatchdogPlugin.getInstance().getObjectMarkerManager().turnOffObjectMarkerMode();
-            this.alert.getNotifications().remove(notification);
+            if (this.alert.getNotifications() != null) {
+                this.alert.getNotifications().remove(notification);
+            }
             this.notificationContainer.remove(removedPanel);
             this.notificationContainer.revalidate();
             this.alertManager.saveAlerts();
         };
 
-        NotificationPanel notificationPanel = null;
-        if (notification instanceof GameMessage) {
-            notificationPanel = new MessageNotificationPanel((GameMessage) notification, true, this, this.alertManager::saveAlerts, removeNotification);
-        } else if (notification instanceof TextToSpeech)
-            notificationPanel = new TextToSpeechNotificationPanel((TextToSpeech) notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof Sound)
-            notificationPanel = new SoundNotificationPanel((Sound)notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof SoundEffect)
-            notificationPanel = new SoundEffectNotificationPanel((SoundEffect)notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof TrayNotification)
-            notificationPanel = new MessageNotificationPanel((TrayNotification)notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof ScreenFlash)
-            notificationPanel = new ScreenFlashNotificationPanel((ScreenFlash) notification, this, this.colorPickerManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof Overhead)
-            notificationPanel = new OverheadNotificationPanel((Overhead) notification, this, this.colorPickerManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof Overlay)
-            notificationPanel = new OverlayNotificationPanel((Overlay) notification, this, this.colorPickerManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof Popup)
-            notificationPanel = new PopupNotificationPanel((Popup) notification, this, this.colorPickerManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof RequestFocus)
-            notificationPanel = new RequestFocusNotificationPanel((RequestFocus) notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof NotificationEvent)
-            notificationPanel = new MessageNotificationPanel((NotificationEvent) notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof DismissOverlay)
-            notificationPanel = new DismissOverlayNotificationPanel((DismissOverlay) notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof DismissScreenMarker)
-            notificationPanel = new DismissScreenMarkerNotificationPanel((DismissScreenMarker) notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof DismissObjectMarker)
-            notificationPanel = new DismissObjectMarkerNotificationPanel((DismissObjectMarker) notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof ScreenMarker)
-            notificationPanel = new ScreenMarkerNotificationPanel((ScreenMarker) notification, this, this.colorPickerManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof ObjectMarker)
-            notificationPanel = new ObjectMarkerNotificationPanel((ObjectMarker) notification, this, this.colorPickerManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof Dink)
-            notificationPanel = new DinkNotificationPanel((Dink) notification, this, this.configManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof ShortestPath)
-            notificationPanel = new ShortestPathNotificationPanel((ShortestPath) notification, this, this.configManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof PluginMessage)
-            notificationPanel = new PluginMessageNotificationPanel((PluginMessage) notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof PluginToggle)
-            notificationPanel = new PluginToggleNotificationPanel((PluginToggle) notification, this, this.pluginManager, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof AlertToggle)
-            notificationPanel = new AlertToggleNotificationPanel((AlertToggle) notification, this, this.alertManager::saveAlerts, removeNotification);
-        else if (notification instanceof Counter)
-            notificationPanel = new CounterNotificationPanel((Counter) notification, this, this.alertManager::saveAlerts, removeNotification);
-
+        NotificationPanel notificationPanel = this.notificationPanelFactory.createPanel(notification, this, removeNotification);
         if (notificationPanel != null)
             this.notificationContainer.add(notificationPanel);
     }
@@ -202,7 +151,9 @@ public class NotificationsPanel extends JPanel {
         Injector injector = WatchdogPlugin.getInstance().getInjector();
         Notification notification = injector.getInstance(notificationType.getImplClass());
         notification.setAlert(this.alert);
-        this.alert.getNotifications().add(notification);
+        if (this.alert.getNotifications() != null) {
+            this.alert.getNotifications().add(notification);
+        }
         return notification;
     }
 }

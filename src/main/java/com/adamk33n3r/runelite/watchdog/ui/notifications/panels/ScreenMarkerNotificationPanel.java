@@ -2,51 +2,58 @@ package com.adamk33n3r.runelite.watchdog.ui.notifications.panels;
 
 import com.adamk33n3r.runelite.watchdog.WatchdogPlugin;
 import com.adamk33n3r.runelite.watchdog.notifications.ScreenMarker;
-import com.adamk33n3r.runelite.watchdog.ui.FlatTextArea;
 import com.adamk33n3r.runelite.watchdog.ui.Icons;
 import com.adamk33n3r.runelite.watchdog.ui.notifications.screenmarker.ScreenMarkerOverlay;
 import com.adamk33n3r.runelite.watchdog.ui.notifications.screenmarker.ScreenMarkerUtil;
-import com.adamk33n3r.runelite.watchdog.ui.panels.NotificationsPanel;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
 
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JPanel;
+import javax.swing.JSpinner;
+import java.awt.BorderLayout;
 
-public class ScreenMarkerNotificationPanel extends NotificationPanel {
+public class ScreenMarkerNotificationPanel extends NotificationContentPanel<ScreenMarker> {
+    private final ColorPickerManager colorPickerManager;
     private ScreenMarkerOverlay screenMarkerOverlay;
     private JButton setMarkerButton;
-    private JPanel displayTime;
-    private JPanel stickyId;
 
-    public ScreenMarkerNotificationPanel(ScreenMarker notification, NotificationsPanel parentPanel, ColorPickerManager colorPickerManager, Runnable onChangeListener, PanelUtils.OnRemove onRemove) {
-        super(notification, parentPanel, onChangeListener, onRemove);
-        // Rebind onRemove to hook into it so that we can delete the screen marker when this notification is deleted
-        // Perhaps this should be refactored
-        this.onRemove = (ele) -> {
+    public ScreenMarkerNotificationPanel(ScreenMarker notification, ColorPickerManager colorPickerManager, Runnable onChange) {
+        super(notification, onChange);
+        this.colorPickerManager = colorPickerManager;
+        this.init();
+    }
+
+    /**
+     * Provides an onRemove hook so the screen marker overlay can be cleaned up when this
+     * notification is deleted from the sidebar.
+     */
+    public PanelUtils.OnRemove wrapOnRemove(PanelUtils.OnRemove original) {
+        return ele -> {
             ScreenMarkerUtil screenMarkerUtil = WatchdogPlugin.getInstance().getScreenMarkerUtil();
             if (this.screenMarkerOverlay != null) {
                 screenMarkerUtil.deleteMarker(this.screenMarkerOverlay);
             }
             screenMarkerUtil.finishCreation(true);
-            onRemove.elementRemoved(ele);
+            original.elementRemoved(ele);
         };
+    }
 
-        net.runelite.client.plugins.screenmarkers.ScreenMarker screenMarker = notification.getScreenMarker();
+    @Override
+    protected void buildContent() {
+        net.runelite.client.plugins.screenmarkers.ScreenMarker screenMarker = this.notification.getScreenMarker();
 
         this.setMarkerButton = PanelUtils.createButton("Set Marker", "Set Marker", (btn, modifiers) -> {
             ScreenMarkerUtil screenMarkerUtil = WatchdogPlugin.getInstance().getScreenMarkerUtil();
-            // Done
             if (screenMarkerUtil.isCreatingScreenMarker()) {
                 this.screenMarkerOverlay = screenMarkerUtil.finishCreation(false);
                 this.setMarkerButton.setText("Set Marker");
                 this.setMarkerButton.setToolTipText("Set Marker");
-                // Start
             } else {
-                // Call this first so that it can get the location and size before we delete it
-                screenMarkerUtil.startCreation(notification);
+                screenMarkerUtil.startCreation(this.notification);
                 if (this.screenMarkerOverlay != null) {
                     screenMarkerUtil.deleteMarker(this.screenMarkerOverlay);
                 }
@@ -54,90 +61,57 @@ public class ScreenMarkerNotificationPanel extends NotificationPanel {
                 this.setMarkerButton.setToolTipText("Finish");
             }
         });
-        this.settings.add(this.setMarkerButton);
+        this.add(this.setMarkerButton);
 
-        FlatTextArea markerLabel = PanelUtils.createTextField(
-            "Optional marker label...",
-            "",
+        this.add(PanelUtils.createTextField(
+            "Optional marker label...", "",
             screenMarker.getName(),
             val -> {
                 screenMarker.setName(val);
                 screenMarker.setLabelled(!val.isEmpty());
-                onChangeListener.run();
+                this.onChange.run();
             }
-        );
-        this.settings.add(markerLabel);
+        ));
 
-        this.settings.add(PanelUtils.createColorPicker(
-            "Border Color",
-            "The color of the border",
-            "Border Color",
-            this,
-            notification.getScreenMarker().getColor(),
-            colorPickerManager,
-            true,
-            val -> {
-               screenMarker.setColor(val);
-               onChangeListener.run();
-            }));
+        this.add(PanelUtils.createColorPicker(
+            "Border Color", "The color of the border", "Border Color",
+            this, screenMarker.getColor(),
+            this.colorPickerManager, true,
+            val -> { screenMarker.setColor(val); this.onChange.run(); }));
 
-        this.settings.add(PanelUtils.createColorPicker(
-            "Fill Color",
-            "The color of the interior",
-            "Fill Color",
-            this,
-            notification.getScreenMarker().getFill(),
-            colorPickerManager,
-            true,
-            val -> {
-                screenMarker.setFill(val);
-                onChangeListener.run();
-            }));
+        this.add(PanelUtils.createColorPicker(
+            "Fill Color", "The color of the interior", "Fill Color",
+            this, screenMarker.getFill(),
+            this.colorPickerManager, true,
+            val -> { screenMarker.setFill(val); this.onChange.run(); }));
 
         JSpinner thickness = PanelUtils.createSpinner(
-            screenMarker.getBorderThickness(),
-            0,
-            Integer.MAX_VALUE,
-            1,
-            val -> {
-                screenMarker.setBorderThickness(val);
-                onChangeListener.run();
-            }
-        );
+            screenMarker.getBorderThickness(), 0, Integer.MAX_VALUE, 1,
+            val -> { screenMarker.setBorderThickness(val); this.onChange.run(); });
+        this.add(PanelUtils.createIconComponent(Icons.BORDER_OUTSIDE, "Border thickness", thickness));
 
-        JPanel borderThickness = PanelUtils.createIconComponent(Icons.BORDER_OUTSIDE, "Border thickness", thickness);
-        this.settings.add(borderThickness);
-        JSpinner displayTime = PanelUtils.createSpinner(notification.getDisplayTime(), 0, 99, 1, val -> {
-            notification.setDisplayTime(val);
-            onChangeListener.run();
+        JSpinner displayTime = PanelUtils.createSpinner(this.notification.getDisplayTime(), 0, 99, 1, val -> {
+            this.notification.setDisplayTime(val);
+            this.onChange.run();
         });
-        displayTime.setEnabled(!notification.isSticky());
-        this.displayTime = PanelUtils.createIconComponent(Icons.CLOCK, "Time to display the marker in seconds.", displayTime);
-        JCheckBox sticky = PanelUtils.createCheckbox("Sticky", "Set the notification to not expire", notification.isSticky(), val -> {
-            notification.setSticky(val);
+        displayTime.setEnabled(!this.notification.isSticky());
+        JPanel displayTimePanel = PanelUtils.createIconComponent(Icons.CLOCK, "Time to display the marker in seconds.", displayTime);
+        JCheckBox sticky = PanelUtils.createCheckbox("Sticky", "Set the notification to not expire", this.notification.isSticky(), val -> {
+            this.notification.setSticky(val);
             displayTime.setEnabled(!val);
-            this.revalidate();
-            onChangeListener.run();
+            this.onChange.run();
         });
 
-        this.settings.add(this.displayTime);
         JPanel sub = new JPanel(new BorderLayout(3, 3));
         sub.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-        this.settings.add(sub);
-
         sub.add(sticky, BorderLayout.EAST);
-        sub.add(this.displayTime);
+        sub.add(displayTimePanel);
+        this.add(sub);
 
-        this.stickyId = PanelUtils.createTextField(
-            "ID for Dismiss Screen Marker...",
-            "",
-            notification.getId(),
-            val -> {
-                notification.setId(val);
-                onChangeListener.run();
-            }
-        );
-
-        this.settings.add(this.stickyId);
+        this.add(PanelUtils.createTextField(
+            "ID for Dismiss Screen Marker...", "",
+            this.notification.getId(),
+            val -> { this.notification.setId(val); this.onChange.run(); }
+        ));
     }
 }

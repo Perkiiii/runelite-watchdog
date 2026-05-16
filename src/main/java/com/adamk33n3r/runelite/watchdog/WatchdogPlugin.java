@@ -1,10 +1,12 @@
 package com.adamk33n3r.runelite.watchdog;
 
+import com.adamk33n3r.runelite.watchdog.alerts.AdvancedAlert;
 import com.adamk33n3r.runelite.watchdog.alerts.Alert;
 import com.adamk33n3r.runelite.watchdog.alerts.AlertGroup;
 import com.adamk33n3r.runelite.watchdog.alerts.AlertMode;
 import com.adamk33n3r.runelite.watchdog.notifications.objectmarkers.ObjectMarkerManager;
 import com.adamk33n3r.runelite.watchdog.notifications.objectmarkers.ObjectMarkerOverlay;
+import com.adamk33n3r.runelite.watchdog.ui.nodegraph.NodeProbeFactory;
 import com.adamk33n3r.runelite.watchdog.ui.notifications.screenmarker.ScreenMarkerUtil;
 
 import net.runelite.api.Client;
@@ -46,7 +48,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.Queue;
-import java.util.stream.Collectors;
 
 import static net.runelite.api.MenuAction.RUNELITE_OVERLAY_CONFIG;
 
@@ -78,6 +79,14 @@ public class WatchdogPlugin extends Plugin {
     @Getter
     @Inject
     private AlertManager alertManager;
+
+    @Getter
+    @Inject
+    private AlertBackupManager alertBackupManager;
+
+    @Getter
+    @Inject
+    private AlertConverter alertConverter;
 
     @Getter
     @Inject
@@ -197,6 +206,10 @@ public class WatchdogPlugin extends Plugin {
         Properties properties = WatchdogProperties.getProperties();
         Names.bindProperties(binder, properties);
         binder.bind(WatchdogMuxer.class).toProvider(() -> this.panel.getMuxer());
+
+        // Anchor node-graph classes in the plugin child injector so they receive
+        // the correct Injector (not the root RuneLite injector) when injected.
+        binder.bind(NodeProbeFactory.class);
     }
 
     @Override
@@ -210,6 +223,7 @@ public class WatchdogPlugin extends Plugin {
         this.screenMarkerUtil.startUp();
 
         this.alertManager.loadAlerts();
+        this.eventHandler.initializePluginVars();
 
         this.icon = this.itemManager.getImage(ItemID.WIN05_BELLBAUBLE_UNPAINTED);
         this.iconDisabled = this.itemManager.getImage(ItemID.WIN05_BELLBAUBLE_RED);
@@ -255,6 +269,8 @@ public class WatchdogPlugin extends Plugin {
 
     @Override
     protected void shutDown() throws Exception {
+        this.alertManager.getAllAlertsOfType(AdvancedAlert.class)
+            .forEach(aa -> aa.getGraph().shutdown());
         this.eventBus.unregister(this.eventHandler);
         this.eventBus.unregister(this.objectMarkerManager);
         this.clientToolbar.removeNavigation(this.navButton);
@@ -292,6 +308,14 @@ public class WatchdogPlugin extends Plugin {
             this.alertProcessors.stream()
                 .filter(ap -> ap.getAlert() == alert)
                 .forEach(AlertProcessor::interrupt);
+        }
+    }
+
+    public void shutdownAdvancedAlertGraph(Alert alert) {
+        if (alert instanceof AdvancedAlert) {
+            ((AdvancedAlert) alert).getGraph().shutdown();
+        } else if (alert instanceof AlertGroup) {
+            ((AlertGroup) alert).getAlerts().forEach(this::shutdownAdvancedAlertGraph);
         }
     }
 

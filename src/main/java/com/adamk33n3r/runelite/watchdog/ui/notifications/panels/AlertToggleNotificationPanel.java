@@ -1,37 +1,34 @@
 package com.adamk33n3r.runelite.watchdog.ui.notifications.panels;
 
 import com.adamk33n3r.runelite.watchdog.notifications.AlertToggle;
-import com.adamk33n3r.runelite.watchdog.ui.panels.NotificationsPanel;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
+
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.ui.ColorScheme;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.JComboBox;
+import javax.swing.JPanel;
 
 @Slf4j
-public class AlertToggleNotificationPanel extends NotificationPanel {
-    public AlertToggleNotificationPanel(AlertToggle notification, NotificationsPanel parentPanel, Runnable onChangeListener, PanelUtils.OnRemove onRemove) {
-        super(notification, parentPanel, onChangeListener, onRemove);
+public class AlertToggleNotificationPanel extends NotificationContentPanel<AlertToggle> {
 
-        this.rebuild();
+    public AlertToggleNotificationPanel(AlertToggle notification, Runnable onChange) {
+        super(notification, onChange);
+        this.init();
     }
 
-    private void rebuild() {
-        this.settings.removeAll();
-
-        AlertToggle notification = (AlertToggle) this.notification;
-
-        JComboBox<AlertToggle.ToggleMode> modeSelect = PanelUtils.createSelect(AlertToggle.ToggleMode.values(), notification.getMode(), (selected) -> {
-            notification.setMode(selected);
-            onChangeListener.run();
+    @Override
+    protected void buildContent() {
+        JComboBox<AlertToggle.ToggleMode> modeSelect = PanelUtils.createSelect(AlertToggle.ToggleMode.values(), this.notification.getMode(), selected -> {
+            this.notification.setMode(selected);
+            this.onChange.run();
             this.rebuild();
         });
         JPanel mode = PanelUtils.createLabeledComponent("Mode", "The toggle mode", modeSelect);
         mode.setBorder(null);
         mode.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-        this.settings.add(mode);
+        this.add(mode);
 
-        this.settings.add(PanelUtils.createRegexMatcher(notification, "Enter alert name pattern", "The pattern to match against the alert name"));
+        this.add(PanelUtils.createRegexMatcher(this.notification, "Enter alert name pattern", "The pattern to match against the alert name"));
     }
 }

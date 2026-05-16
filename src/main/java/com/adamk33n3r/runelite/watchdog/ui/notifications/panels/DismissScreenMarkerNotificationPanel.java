@@ -1,23 +1,25 @@
 package com.adamk33n3r.runelite.watchdog.ui.notifications.panels;
 
 import com.adamk33n3r.runelite.watchdog.notifications.DismissScreenMarker;
-import com.adamk33n3r.runelite.watchdog.ui.FlatTextArea;
-import com.adamk33n3r.runelite.watchdog.ui.panels.NotificationsPanel;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
 
-public class DismissScreenMarkerNotificationPanel extends NotificationPanel {
-    public DismissScreenMarkerNotificationPanel(DismissScreenMarker notification, NotificationsPanel parentPanel, Runnable onChangeListener, PanelUtils.OnRemove onRemove) {
-        super(notification, parentPanel, onChangeListener, onRemove);
+public class DismissScreenMarkerNotificationPanel extends NotificationContentPanel<DismissScreenMarker> {
 
-        FlatTextArea flatTextArea = PanelUtils.createTextField(
+    public DismissScreenMarkerNotificationPanel(DismissScreenMarker notification, Runnable onChange) {
+        super(notification, onChange);
+        this.init();
+    }
+
+    @Override
+    protected void buildContent() {
+        this.add(PanelUtils.createTextField(
             "Enter the ID of the screen marker...",
             "This is set in the Screen Marker notification when set to Sticky.",
-            notification.getDismissId(),
+            this.notification.getDismissId(),
             val -> {
-                notification.setDismissId(val);
-                onChangeListener.run();
+                this.notification.setDismissId(val);
+                this.onChange.run();
             }
-        );
-        this.settings.add(flatTextArea);
+        ));
     }
 }

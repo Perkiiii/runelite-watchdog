@@ -3,7 +3,6 @@ package com.adamk33n3r.runelite.watchdog.ui.notifications.panels;
 import com.adamk33n3r.runelite.watchdog.notifications.Sound;
 import com.adamk33n3r.runelite.watchdog.ui.Icons;
 import com.adamk33n3r.runelite.watchdog.ui.notifications.VolumeSlider;
-import com.adamk33n3r.runelite.watchdog.ui.panels.NotificationsPanel;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
 
 import net.runelite.client.ui.ColorScheme;
@@ -17,32 +16,36 @@ import java.util.Arrays;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-public class SoundNotificationPanel extends NotificationPanel {
+public class SoundNotificationPanel extends NotificationContentPanel<Sound> {
 
-    public SoundNotificationPanel(Sound sound, NotificationsPanel parentPanel, Runnable onChangeListener, PanelUtils.OnRemove onRemove) {
-        super(sound, parentPanel, onChangeListener, onRemove);
+    public SoundNotificationPanel(Sound notification, Runnable onChange) {
+        super(notification, onChange);
+        this.init();
+    }
 
+    @Override
+    protected void buildContent() {
         String[] supportedExtensions = Stream.concat(
             Arrays.stream(AudioSystem.getAudioFileTypes())
                 .map(AudioFileFormat.Type::getExtension),
             Stream.of("mp3")
         ).toArray(String[]::new);
-        this.settings.add(new JLabel("Choose sound (" + Arrays.stream(supportedExtensions).map(ext -> '.' + ext).collect(Collectors.joining(", ")) + ")"));
-        this.settings.add(PanelUtils.createFileChooser(null, "Path to the sound file", ev -> {
+        this.add(new JLabel("Choose sound (" + Arrays.stream(supportedExtensions).map(ext -> '.' + ext).collect(Collectors.joining(", ")) + ")"));
+        this.add(PanelUtils.createFileChooser(null, "Path to the sound file", ev -> {
             JFileChooser fileChooser = (JFileChooser) ev.getSource();
-            sound.setPath(fileChooser.getSelectedFile().getAbsolutePath());
-            onChangeListener.run();
-        }, sound.getPath(), "Sound Files", supportedExtensions));
+            this.notification.setPath(fileChooser.getSelectedFile().getAbsolutePath());
+            this.onChange.run();
+        }, this.notification.getPath(), "Sound Files", supportedExtensions));
 
-        VolumeSlider volumeSlider = new VolumeSlider(sound);
+        VolumeSlider volumeSlider = new VolumeSlider(this.notification);
         volumeSlider.setBackground(ColorScheme.MEDIUM_GRAY_COLOR);
-        volumeSlider.addChangeListener(e -> onChangeListener.run());
-        this.settings.add(PanelUtils.createIconComponent(Icons.VOLUME, "The volume to playback sound", volumeSlider));
+        volumeSlider.addChangeListener(e -> this.onChange.run());
+        this.add(PanelUtils.createIconComponent(Icons.VOLUME, "The volume to playback sound", volumeSlider));
 
-        JSpinner repeatDuration = PanelUtils.createSpinner(sound.getRepeatDuration(), -1, 120, 1, val -> {
-            sound.setRepeatDuration(val);
-            onChangeListener.run();
+        JSpinner repeatDuration = PanelUtils.createSpinner(this.notification.getRepeatDuration(), -1, 120, 1, val -> {
+            this.notification.setRepeatDuration(val);
+            this.onChange.run();
         });
-        this.settings.add(PanelUtils.createIconComponent(Icons.CLOCK, "Duration to repeat sound, use -1 to repeat until cancelled", repeatDuration));
+        this.add(PanelUtils.createIconComponent(Icons.CLOCK, "Duration to repeat sound, use -1 to repeat until cancelled", repeatDuration));
     }
 }

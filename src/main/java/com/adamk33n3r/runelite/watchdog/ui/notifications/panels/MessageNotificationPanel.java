@@ -1,27 +1,27 @@
 package com.adamk33n3r.runelite.watchdog.ui.notifications.panels;
 
+import com.adamk33n3r.runelite.watchdog.notifications.GameMessage;
 import com.adamk33n3r.runelite.watchdog.notifications.MessageNotification;
-import com.adamk33n3r.runelite.watchdog.ui.FlatTextArea;
-import com.adamk33n3r.runelite.watchdog.ui.panels.NotificationsPanel;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
 
-public class MessageNotificationPanel extends NotificationPanel {
-    public MessageNotificationPanel(MessageNotification notification, NotificationsPanel parentPanel, Runnable onChangeListener, PanelUtils.OnRemove onRemove) {
-        this(notification, false, parentPanel, onChangeListener, onRemove);
+public class MessageNotificationPanel extends NotificationContentPanel<MessageNotification> {
+
+    public MessageNotificationPanel(MessageNotification notification, Runnable onChange) {
+        super(notification, onChange);
+        this.init();
     }
 
-    public MessageNotificationPanel(MessageNotification notification, boolean supportsFormattingTags, NotificationsPanel parentPanel, Runnable onChangeListener, PanelUtils.OnRemove onRemove) {
-        super(notification, parentPanel, onChangeListener, onRemove);
-
-        FlatTextArea flatTextArea = PanelUtils.createTextField(
+    @Override
+    protected void buildContent() {
+        boolean supportsFormattingTags = this.notification instanceof GameMessage;
+        this.add(PanelUtils.createTextField(
             supportsFormattingTags ? "Enter your formatted message..." : "Enter your message...",
             "",
-            notification.getMessage(),
+            this.notification.getMessage(),
             val -> {
-                notification.setMessage(val);
-                onChangeListener.run();
+                this.notification.setMessage(val);
+                this.onChange.run();
             }
-        );
-        this.settings.add(flatTextArea);
+        ));
     }
 }

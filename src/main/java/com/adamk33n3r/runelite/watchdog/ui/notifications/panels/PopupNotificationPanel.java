@@ -1,44 +1,52 @@
 package com.adamk33n3r.runelite.watchdog.ui.notifications.panels;
 
 import com.adamk33n3r.runelite.watchdog.notifications.Popup;
-import com.adamk33n3r.runelite.watchdog.ui.FlatTextArea;
-import com.adamk33n3r.runelite.watchdog.ui.panels.NotificationsPanel;
 import com.adamk33n3r.runelite.watchdog.ui.panels.PanelUtils;
+
 import net.runelite.client.ui.components.ColorJButton;
 import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 
-import java.awt.*;
+public class PopupNotificationPanel extends NotificationContentPanel<Popup> {
+    private final ColorPickerManager colorPickerManager;
 
-public class PopupNotificationPanel extends MessageNotificationPanel {
-    public PopupNotificationPanel(Popup notification, NotificationsPanel parentPanel, ColorPickerManager colorPickerManager, Runnable onChangeListener, PanelUtils.OnRemove onRemove) {
-        super(notification, true, parentPanel, onChangeListener, onRemove);
+    public PopupNotificationPanel(Popup notification, ColorPickerManager colorPickerManager, Runnable onChange) {
+        super(notification, onChange);
+        this.colorPickerManager = colorPickerManager;
+        this.init();
+    }
 
-        Component message = this.settings.getComponent(0);
-        this.settings.remove(message);
-
-        FlatTextArea title = PanelUtils.createTextArea(
+    @Override
+    protected void buildContent() {
+        this.add(PanelUtils.createTextArea(
             "Title. Empty uses the alert's name.",
             "The title of the popup. Leave empty to use the alert's name. Also supports formatting and capture groups.",
-            notification.getTitle(),
-            notification::setTitle
-        );
+            this.notification.getTitle(),
+            this.notification::setTitle
+        ));
 
-        this.settings.add(title);
-        this.settings.add(message);
+        this.add(PanelUtils.createTextField(
+            "Enter your formatted message...",
+            "",
+            this.notification.getMessage(),
+            val -> {
+                this.notification.setMessage(val);
+                this.onChange.run();
+            }
+        ));
 
         ColorJButton textColorPicker = PanelUtils.createColorPicker(
             "Pick a color",
             "The text color of the notification",
             "Text Color",
             this,
-            notification.getTextColor(),
-            colorPickerManager,
+            this.notification.getTextColor(),
+            this.colorPickerManager,
             false,
             val -> {
-                notification.setTextColor(val);
-                onChangeListener.run();
+                this.notification.setTextColor(val);
+                this.onChange.run();
             }
         );
-        this.settings.add(textColorPicker);
+        this.add(textColorPicker);
     }
 }

@@ -404,7 +404,7 @@ public class PanelUtils {
         ActionListener actionListener = e -> {
             JMenuItem menuItem = (JMenuItem) e.getSource();
             TriggerType tType = (TriggerType) menuItem.getClientProperty(TriggerType.class);
-            Alert createdAlert = WatchdogPlugin.getInstance().getInjector().getInstance(tType.getImplClass());
+            Alert createdAlert = WatchdogPlugin.getInstance().getAlertManager().createAlert(tType.getImplClass());
             onCreate.accept(createdAlert);
         };
 
@@ -416,6 +416,7 @@ public class PanelUtils {
         popupMenu.add(alertGroupMenuItem);
         popupMenu.addSeparator();
         Arrays.stream(TriggerType.values())
+            .filter(tType -> tType != TriggerType.ADVANCED_ALERT || WatchdogPlugin.getInstance().getConfig().enableAdvancedAlerts())
             .filter(tType -> tType != TriggerType.ALERT_GROUP)
             .forEach(tType -> {
                 JMenuItem c = new JMenuItem(tType.getName());
@@ -499,5 +500,26 @@ public class PanelUtils {
             }),
             btnGroup
         );
+    }
+
+    public static Component getDeepestComponentAt(JLayeredPane parent, Integer layer, int x, int y) {
+        if (!parent.contains(x, y)) {
+            return null;
+        }
+        Component[] components = parent.getComponentsInLayer(layer);
+        for (Component comp : components) {
+            if (comp != null && comp.isVisible()) {
+                Point loc = comp.getLocation();
+                if (comp instanceof Container) {
+                    comp = SwingUtilities.getDeepestComponentAt(comp, x - loc.x, y - loc.y);
+                } else {
+                    comp = comp.getComponentAt(x - loc.x, y - loc.y);
+                }
+                if (comp != null && comp.isVisible()) {
+                    return comp;
+                }
+            }
+        }
+        return parent;
     }
 }
