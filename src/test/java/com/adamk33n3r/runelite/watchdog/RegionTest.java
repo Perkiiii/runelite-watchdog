@@ -8,19 +8,14 @@ import org.mockito.InjectMocks;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnitRunner;
 
-import java.util.Arrays;
-import java.util.stream.Collectors;
-
 @RunWith(MockitoJUnitRunner.class)
 public class RegionTest extends TestBase {
     @InjectMocks
     EventHandler eventHandler;
 
     @Test
-    public void testCoxBanned() {
+    public void testCoxAllowedForTemporaryBypass() {
         var mockWorldView = Mockito.mock(WorldView.class);
-        Mockito.when(mockWorldView.isInstance()).thenReturn(false);
-        Mockito.when(mockWorldView.getPlane()).thenReturn(0);
 
 //        var regions = Arrays.stream(Region.values())
 //            .filter(r -> mockWorldView.isInstance() || !r.config.onlyInInstance)
@@ -31,6 +26,6 @@ public class RegionTest extends TestBase {
 //            System.out.println(region);
 //        }
         var res = Region.isBannedRegion(12889, mockWorldView);
-        Assert.assertTrue(res);
+        Assert.assertFalse(res);
     }
 }

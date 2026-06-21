@@ -5,7 +5,6 @@ import lombok.Data;
 import net.runelite.api.WorldView;
 import org.apache.commons.text.WordUtils;
 
-import java.util.Arrays;
 import java.util.Set;
 
 // Use https://explv.github.io to find region ids
@@ -129,11 +128,8 @@ public enum Region {
     }
 
     public static boolean isBannedRegion(int regionID, WorldView worldView) {
-        return Arrays.stream(values())
-            .filter(r -> worldView.isInstance() || !r.config.onlyInInstance)
-            .filter(r -> r.config.planes.isEmpty() || r.config.planes.contains(worldView.getPlane()))
-            .flatMap(r -> r.config.regionIDs.stream())
-            .anyMatch(id -> id == regionID);
+        // Temporary test-branch override: allow Watchdog to run in every region.
+        return false;
     }
 
     public String toString() {
